@@ -102,7 +102,8 @@ console.log('[daily-report] 今日调用 ' + s.total + ' 次，平均 ' + s.avg 
 
 if (doSync) {
   try {
-    execFileSync('git', ['add', 'process_logs/', 'data/'], { cwd: ROOT, stdio: 'inherit' });
+    // 只提交日志目录：业务数据 data/ 由 .gitignore 排除，目录不存在时也不应让同步失败
+    execFileSync('git', ['add', 'process_logs/'], { cwd: ROOT, stdio: 'inherit' });
     execFileSync('git', ['commit', '-m', 'chore(logs): 同步 ' + day + ' 自动化运行日报'], { cwd: ROOT, stdio: 'inherit' });
     console.log('[daily-report] 已提交到本地 Git；推送请执行 git push');
   } catch (err) {

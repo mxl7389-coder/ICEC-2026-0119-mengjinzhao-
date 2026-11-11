@@ -50,7 +50,7 @@ git push
 - **耗时**：`duration_ms`，日报里给平均值、P95 与峰值。
 - **报错**：`status=error` + `error_code`（如 `EMPTY_NOTICE`、`OUT_OF_STOCK`、`UNKNOWN_ROUTE`），由真实失败请求产生。
 - **脱敏**：日志不写通知原文、姓名、学号、题目、反馈正文；`meta` 只留长度、条数、命中规则数等可统计特征，并有字段名黑名单兜底；`session` 是不可逆哈希。
-- **每日同步**：`node scripts/daily-report.js --sync` 生成 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git add process_logs/ data/` + `commit`。
+- **每日同步**：`node scripts/daily-report.js --sync` 生成 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git add process_logs/` + `commit`（业务数据按 `.gitignore` 不入库）。
 
 > ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。从今天开始每天用一次、睡前跑一次 `--sync`，7 天后 `process_logs/` 里自然就是 7 个日期文件。`node scripts/smoke-test.js` 产生的是当天的真实自动化调用记录，不是伪造的历史数据。
 
