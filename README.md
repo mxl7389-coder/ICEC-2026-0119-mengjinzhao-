@@ -43,7 +43,7 @@ git push
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v1.0.0","session":"a1b2c3d4e5f6","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88,"parse_ms":1.1,"warning_count":0}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v3.0.0","session":"a1b2c3d4e5f6","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88,"parse_ms":1.1,"warning_count":0}}
 ```
 
 - **调用频次**：按模块 / 动作 / 自然日聚合，页面「运行日志」可直接看。
@@ -92,7 +92,20 @@ git push
 **复测结果**（`node scripts/smoke-test.js`）：三条示例 `confidence` 全部为 **88**；活动日期 `11-14 / 11-18 / 12-01`，截止 `11-13 / 11-20 / 12-01`，地点 `教学楼A301教室 / 东区操场 / 学生事务中心一楼大厅`。
 
 ### v3 · 依据耗时与报错数据优化
-> 详见该次 commit diff 与 commit message。
+
+**日志证据**：v2 日志里写类请求明显慢于读类 —— `notice/save` 15ms、`loan/create` 13.65ms、`feedback/add` 12.94ms、`mistake/add` 12.37ms，而 `health` / `notice/list` 等读请求普遍 <2ms，峰值 `bootstrap` 28.19ms。同时三类报错（`EMPTY_NOTICE` / `OUT_OF_STOCK` / `UNKNOWN_ROUTE`）在日志页只能看到总次数，无法按错误码定位高频问题。
+
+| # | 优化 | 做法 |
+| --- | --- | --- |
+| 1 | 单请求重复计算 | `handle` / `route` 拆分，加入请求级库存快照缓存；`bootstrap` 与 `dashboard` 共用一次 `reconcile()`，`equipment/list` 从算两次降为一次 |
+| 2 | 借出校验过重 | 新增 `availableOf()`，只算目标器材的可用量，不再为校验单件而重建整张流水表 |
+| 3 | 日报阻塞事件循环 | `logs/report` 由 `execFileSync` 改为异步 `execFile` + Promise |
+| 4 | 报错不可聚合 | `telemetry.aggregate()` 与日报新增 `by_error_code`，日志页新增错误码分布条 |
+| 5 | 优化效果不可见 | 每条日志的 `meta` 新增 `reconcile_calls`（实际计算次数），冒烟测试新增 3 项断言直接校验它 ≤1 |
+
+日志 `app_version` 升到 `v3.0.0`。**复测**：冒烟测试 27/27 项通过，所有 `v3.0.0` 请求的 `reconcile_calls` 均 ≤1，错误码聚合覆盖 3 类。
+
+> 耗时实测：平均 `5.49ms (v1) → 5.03ms (v2) → 5.10ms (v3)`，`bootstrap` `28.19ms → 24.84ms`。**不夸大提速幅度** —— 当前只有 6 类器材、几十条流水，重复计算本身很便宜，主要耗时来自同步写盘与首次启动；这次改动的价值在于数据量增长后不再随流水线性放大，以及去掉 `execFileSync` 对整个事件循环的阻塞，并让 `reconcile_calls` 成为可长期观测的指标。
 
 ---
 

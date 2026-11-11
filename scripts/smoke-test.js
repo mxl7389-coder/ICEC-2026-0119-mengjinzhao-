@@ -114,6 +114,12 @@ async function main() {
     check('日志含报错记录', (logs.data.by_status.error || 0) >= 3, '报错 ' + (logs.data.by_status.error || 0) + ' 次');
     const day = await req('GET', '/api/logs/day?date=' + telemetry.localDay());
     check('按天读取日志', day.data.rows.length > 0);
+    check('错误码聚合可用', Object.keys(logs.data.by_error_code || {}).length >= 3,
+      Object.keys(logs.data.by_error_code || {}).join(','));
+    const v3rows = day.data.rows.filter((r) => r.app_version === 'v3.0.0');
+    check('日志含 reconcile_calls 特征', v3rows.some((r) => typeof r.meta.reconcile_calls === 'number'));
+    check('单请求库存快照计算 ≤1 次', v3rows.every((r) => (r.meta.reconcile_calls || 0) <= 1),
+      '峰值 ' + Math.max(...v3rows.map((r) => r.meta.reconcile_calls || 0)) + ' 次');
     const report = await req('POST', '/api/logs/report', {});
     check('当日日报生成', report.data.ok);
 

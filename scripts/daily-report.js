@@ -25,18 +25,22 @@ const prevDay = (() => {
 const prevRows = telemetry.readDay(prevDay);
 
 function stat(list) {
-  const byModule = {}, byAction = {}, byStatus = {};
+  const byModule = {}, byAction = {}, byStatus = {}, byErrorCode = {};
   let errs = [];
   for (const r of list) {
     byModule[r.module] = (byModule[r.module] || 0) + 1;
     byAction[r.action] = (byAction[r.action] || 0) + 1;
     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
-    if (r.status === 'error') errs.push(r);
+    if (r.status === 'error') {
+      const code = r.error_code || 'UNKNOWN';
+      byErrorCode[code] = (byErrorCode[code] || 0) + 1;
+      errs.push(r);
+    }
   }
   const ds = list.map((r) => r.duration_ms).sort((a, b) => a - b);
   const avg = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : 0;
   return {
-    total: list.length, byModule, byAction, byStatus, errs,
+    total: list.length, byModule, byAction, byStatus, byErrorCode, errs,
     avg: Math.round(avg * 100) / 100,
     p95: ds.length ? ds[Math.floor(ds.length * 0.95)] : 0,
     max: ds.length ? ds[ds.length - 1] : 0,
@@ -79,6 +83,9 @@ if (s.errs.length) {
 } else {
   md.push('', '今日无报错。');
 }
+const errRows = Object.entries(s.byErrorCode).sort((a, b) => b[1] - a[1])
+  .map(([k, v]) => '| ' + k + ' | ' + v + ' |').join('\n');
+md.push('', '### 错误码分布', '', '| 错误码 | 次数 |', '| --- | ---: |', errRows || '| （无） | 0 |');
 md.push('', '## 数据文件状态', '', '| 数据集 | 条数 |', '| --- | ---: |');
 for (const name of ['notices', 'equipment', 'loans', 'mistakes', 'feedback']) {
   const file = path.join(ROOT, 'data', name + '.json');

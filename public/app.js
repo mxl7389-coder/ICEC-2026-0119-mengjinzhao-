@@ -105,7 +105,11 @@ function switchView(name) {
 async function refreshView(name) {
   try {
     if (name === 'dashboard') {
-      S.dashboard = await api('dashboard');
+      // 总览的待办/复习列表来自业务数据，必须与看板一起刷新，否则新增后回到首页仍是旧列表
+      const [d, n, m] = await Promise.all([
+        api('dashboard'), api('notice/list'), api('mistake/list'),
+      ]);
+      S.dashboard = d; S.notices = n.items; S.mistakes = m.items;
       renderDashboard();
     } else if (name === 'notice') {
       const r = await api('notice/list'); S.notices = r.items; renderNoticeList();
@@ -326,12 +330,22 @@ function renderLogs() {
     : '<div class="table-empty">暂无调用数据</div>';
 
   $('#error-count').textContent = (a.by_status.error || 0) + ' 次';
+  const codes = Object.entries(a.by_error_code || {}).sort((x, y) => y[1] - x[1]);
+  const codeMax = Math.max(1, ...codes.map((c) => c[1]));
+  $('#error-codes').innerHTML = codes.length ? codes.map(([k, v]) =>
+    '<div class="bar-row"><span class="bar-name" style="width:112px">' + esc(k) + '</span>' +
+    '<span class="bar-track"><span class="bar-fill" style="width:' + (v / codeMax * 100) + '%"></span></span>' +
+    '<span class="bar-val">' + v + '</span></div>').join('')
+    : '<div class="table-empty">窗口内无报错 ✓</div>';
   $('#error-list').innerHTML = a.errors.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>模块/动作</th><th>错误码</th></tr></thead><tbody>' +
     a.errors.slice().reverse().slice(0, 8).map((e) => '<tr><td class="nowrap">' + esc(fmtTime(e.ts)) + '</td><td>' + esc(e.module + ' / ' + e.action) + '</td><td><span class="tag tag-bad">' + esc(e.error_code || '-') + '</span></td></tr>').join('') +
     '</tbody></table></div>' : '<div class="table-empty">当前窗口内没有报错 ✓</div>';
 
-  $('#log-day-select').innerHTML = a.all_days.slice().reverse().map((d) =>
-    '<option value="' + d + '"' + (d === S.today ? ' selected' : '') + '>' + d + '</option>').join('') || '<option>' + S.today + '</option>';
+  // 保留用户当前选中的日期，避免 renderLogs 重绘后跳回今天
+  const selectedDay = $('#log-day-select').value || S.today;
+  const dayOptions = a.all_days.slice().reverse();
+  $('#log-day-select').innerHTML = (dayOptions.length ? dayOptions : [S.today])
+    .map((d) => '<option value="' + d + '"' + (d === selectedDay ? ' selected' : '') + '>' + d + '</option>').join('');
 
   const rows = S.dayRows.slice(-25).reverse();
   $('#log-table').innerHTML = rows.length ? '<div class="table-wrap"><table class="table"><thead><tr>' +
