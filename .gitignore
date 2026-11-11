@@ -1,0 +1,9 @@
+node_modules/
+*.tmp
+*.bad
+.DS_Store
+Thumbs.db
+
+# 业务数据保留在本机，不随仓库提交；运行日志必须提交
+data/*.json
+data/__smoke__/
