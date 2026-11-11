@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>校园事务台 · CampusDesk</title>
+<title>工作台 · 校园事务台 CampusDesk</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -20,31 +20,35 @@
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17h.01"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"/><path d="M15 8l4 4-4 4M9 12h10"/></symbol>
 </svg>
 
-<div class="app">
+<div class="app shell">
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark">校</div>
       <div class="brand-text">
         <strong>校园事务台</strong>
-        <span>CampusDesk · 轻量化实用工具</span>
+        <span>学生 / 教师工作台</span>
       </div>
     </div>
     <nav class="nav" id="nav">
+      <div class="nav-label">日常工作</div>
       <button class="nav-item active" data-view="dashboard"><svg><use href="#i-home"/></svg>总览看板</button>
       <button class="nav-item" data-view="notice"><svg><use href="#i-notice"/></svg>通知提取<span class="nav-badge" id="badge-notice">0</span></button>
       <button class="nav-item" data-view="equipment"><svg><use href="#i-box"/></svg>器材借还<span class="nav-badge warn" id="badge-loan">0</span></button>
       <button class="nav-item" data-view="mistake"><svg><use href="#i-book"/></svg>错题归档<span class="nav-badge" id="badge-mistake">0</span></button>
       <div class="nav-divider"></div>
-      <button class="nav-item" data-view="logs"><svg><use href="#i-chart"/></svg>运行日志</button>
+      <div class="nav-label">协作与说明</div>
       <button class="nav-item" data-view="feedback"><svg><use href="#i-chat"/></svg>使用反馈</button>
       <button class="nav-item" data-view="about"><svg><use href="#i-info"/></svg>项目说明</button>
+      <a class="nav-item hidden" id="nav-admin" href="/admin.html"><svg><use href="#i-shield"/></svg>管理后台</a>
     </nav>
     <div class="side-foot">
       <div class="live-dot"><i></i> 本地服务运行中</div>
       <div class="side-meta">v<span id="side-version">—</span> · 日志 <span id="side-logdays">0</span> 天</div>
-      <div class="side-meta">数据保存在本机 data/</div>
+      <div class="side-meta">业务数据由使用者录入，保存在本机 data/</div>
     </div>
   </aside>
 
@@ -56,26 +60,40 @@
       </div>
       <div class="topbar-right">
         <div class="today-chip"><svg><use href="#i-clock"/></svg><span id="today-text">—</span></div>
-        <div class="health-chip"><span class="pulse"></span>服务在线</div>
+        <div class="user-chip" id="user-chip">
+          <div class="user-avatar" id="user-avatar">—</div>
+          <div class="user-meta"><strong id="user-name">—</strong><span id="user-role">—</span></div>
+          <div class="user-menu" id="user-menu">
+            <button class="menu-item" id="btn-pass"><svg><use href="#i-shield"/></svg>修改密码</button>
+            <a class="menu-item hidden" id="link-admin" href="/admin.html"><svg><use href="#i-chart"/></svg>进入管理后台</a>
+            <div class="menu-sep"></div>
+            <button class="menu-item danger" id="btn-logout"><svg><use href="#i-logout"/></svg>退出登录</button>
+          </div>
+        </div>
       </div>
     </header>
 
     <main class="content">
+      <div class="zero-banner" id="zero-banner">
+        <svg><use href="#i-info"/></svg>
+        <span id="zero-text">当前还没有任何业务数据。所有通知、器材、错题与反馈都由你和使用者自行录入，系统不会代填。</span>
+      </div>
+
       <!-- ============ 总览 ============ -->
       <section class="view active" id="view-dashboard">
         <div class="hero">
           <div class="hero-copy">
             <div class="hero-kicker">项目四 · 解决校园真实痛点</div>
             <h2>今天有哪些事要处理？</h2>
-            <p>通知自动拆成待办、器材借还自动核对库存与逾期、错题按遗忘曲线排队复习。所有操作都会被匿名记录，用来持续改进这个工具。</p>
+            <p>通知自动拆成待办、器材借还自动核对库存与逾期、错题按遗忘曲线排队复习。不同的角色看到不同范围的数据，所有操作都会被匿名记录，用来持续改进这个工具。</p>
             <div class="hero-actions">
               <button class="btn btn-white" data-go="notice">去提取一条通知</button>
-              <button class="btn btn-ghost-white" data-go="logs">查看运行日志</button>
+              <button class="btn btn-ghost-white" data-go="equipment">查看器材库存</button>
             </div>
           </div>
           <div class="hero-side">
-            <div class="hero-num"><strong id="hero-calls">0</strong><span>累计调用次数</span></div>
-            <div class="hero-num"><strong id="hero-days">0</strong><span>已记录天数</span></div>
+            <div class="hero-num"><strong id="hero-todo">0</strong><span>我的待处理通知</span></div>
+            <div class="hero-num"><strong id="hero-review">0</strong><span>今日待复习</span></div>
           </div>
         </div>
 
@@ -83,12 +101,12 @@
 
         <div class="two-col">
           <div class="card">
-            <div class="card-head"><h3>近 7 天调用趋势</h3><button class="link-btn" data-go="logs">明细 →</button></div>
+            <div class="card-head"><h3>近 7 天程序调用趋势</h3><span class="chip">自动采集</span></div>
             <div id="trend-chart" class="trend-chart"></div>
-            <div class="chart-foot">程序自动采集 · 仅统计次数与耗时，不含任何原文</div>
+            <div class="chart-foot">仅统计次数与耗时，不含任何原文；实时明细在管理员后台查看</div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>今日待办</h3><button class="link-btn" data-go="notice">全部 →</button></div>
+            <div class="card-head"><h3>我的待办</h3><button class="link-btn" data-go="notice">全部 →</button></div>
             <div id="dash-todos" class="mini-list"></div>
             <div class="card-head mt"><h3>今日待复习</h3><button class="link-btn" data-go="mistake">去复习 →</button></div>
             <div id="dash-reviews" class="mini-list"></div>
@@ -100,15 +118,12 @@
       <section class="view" id="view-notice">
         <div class="section-intro">
           <h2>通知提取</h2>
-          <p>粘贴班群 / 教务处通知，自动拆出时间、地点、对象、截止日期与待办，可存入清单或导出到日历。</p>
+          <p>粘贴班群 / 教务处通知，自动拆出时间、地点、对象、截止日期与待办，可存入清单或导出到日历。示例文本不会预置，请粘贴你自己的通知。</p>
         </div>
         <div class="two-col uneven">
           <div class="card">
-            <div class="card-head">
-              <h3>原始通知</h3>
-              <div class="sample-row" id="sample-row"></div>
-            </div>
-            <textarea id="notice-input" class="textarea" rows="10" placeholder="把通知原文粘贴到这里…&#10;例如：关于召开班会的通知，请各班班长于11月14日下午14:30在教学楼A301教室参加…"></textarea>
+            <div class="card-head"><h3>原始通知</h3><span class="chip">本地解析</span></div>
+            <textarea id="notice-input" class="textarea" rows="10" placeholder="把通知原文粘贴到这里…&#10;例如：请各班班长于11月14日下午14:30到教学楼A301参加会议，并带上名单。"></textarea>
             <div class="row-between">
               <span class="hint"><span id="notice-count">0</span> 字 · 解析在本地完成，不上传任何内容</span>
               <button class="btn btn-primary" id="btn-parse"><svg><use href="#i-check"/></svg>结构化提取</button>
@@ -118,12 +133,12 @@
             <div class="card-head"><h3>提取结果</h3><span class="chip" id="parse-conf">等待输入</span></div>
             <div id="parse-result" class="empty-state">
               <div class="empty-icon"><svg><use href="#i-notice"/></svg></div>
-              <p>左侧粘贴通知后点击「结构化提取」</p>
-              <span>支持 11月14日 / 2026-11-14 / 下周三 / 明天 / 下午2点半 等常见写法</span>
+              <p>左侧粘贴一条真实通知后点击「结构化提取」</p>
+              <span>支持 11月14日 / 2026-11-14 / 下周三 / 明天 / 下午2点半 等常见写法；结果需你确认后才会保存</span>
             </div>
           </div>
         </div>
-        <div class="card">
+        <div class="card" style="margin-top:16px">
           <div class="card-head"><h3>已保存的待办</h3><span class="chip" id="notice-total">0 条</span></div>
           <div id="notice-list"></div>
         </div>
@@ -133,7 +148,7 @@
       <section class="view" id="view-equipment">
         <div class="section-intro">
           <h2>器材借还核对</h2>
-          <p>借出、部分归还、逾期与库存差异自动核对，避免"账上有、柜子里没有"。</p>
+          <p>借出、部分归还、逾期与库存差异自动核对。器材清单由教师或管理员添加，学生可登记借用与归还。</p>
         </div>
         <div class="recon-bar" id="recon-bar"></div>
         <div class="two-col uneven">
@@ -151,20 +166,21 @@
               </div>
               <button class="btn btn-primary full" type="submit"><svg><use href="#i-plus"/></svg>登记借出</button>
             </form>
-            <div class="card-head mt"><h3>新增器材</h3></div>
-            <form id="form-equipment" class="form inline-form">
+            <div class="card-head mt role-only" data-roles="teacher,admin"><h3>新增器材</h3><span class="chip">教师 / 管理员</span></div>
+            <form id="form-equipment" class="form inline-form role-only" data-roles="teacher,admin">
               <input id="eq-name" placeholder="名称" required maxlength="30">
               <input id="eq-total" type="number" min="1" value="10" placeholder="总数" required>
               <select id="eq-category"><option>体育器材</option><option>实验设备</option><option>教学设备</option><option>其他</option></select>
               <button class="btn btn-soft" type="submit">添加</button>
             </form>
+            <div class="admin-note role-only" data-roles="student">学生账号可查看库存并登记借还；如需新增器材，请联系教师或管理员。</div>
           </div>
           <div class="card">
             <div class="card-head"><h3>库存看板</h3><span class="chip" id="eq-count">—</span></div>
             <div id="eq-grid" class="eq-grid"></div>
           </div>
         </div>
-        <div class="card">
+        <div class="card" style="margin-top:16px">
           <div class="card-head"><h3>借还流水</h3><span class="chip" id="loan-count">0 条</span></div>
           <div id="loan-table"></div>
         </div>
@@ -174,7 +190,7 @@
       <section class="view" id="view-mistake">
         <div class="section-intro">
           <h2>错题归档</h2>
-          <p>按学科与知识点归档，按 1 / 2 / 4 / 7 / 15 / 30 天间隔排队复习，标记掌握后自动出队。</p>
+          <p>按学科与知识点归档，按 1 / 2 / 4 / 7 / 15 / 30 天间隔排队复习，标记掌握后自动出队。学生只看到自己录入的错题。</p>
         </div>
         <div class="two-col uneven">
           <div class="card">
@@ -197,41 +213,9 @@
             <div id="subject-bars"></div>
           </div>
         </div>
-        <div class="card">
+        <div class="card" style="margin-top:16px">
           <div class="card-head"><h3>全部错题</h3><span class="chip" id="ms-total">0 题</span></div>
           <div id="mistake-table"></div>
-        </div>
-      </section>
-
-      <!-- ============ 运行日志 ============ -->
-      <section class="view" id="view-logs">
-        <div class="section-intro">
-          <h2>运行日志</h2>
-          <p>每次接口调用自动写入 <code>process_logs/YYYY-MM-DD.jsonl</code>，记录调用频次、耗时、状态与报错，全部脱敏。</p>
-        </div>
-        <div class="stat-grid" id="log-stats"></div>
-        <div class="two-col">
-          <div class="card">
-            <div class="card-head"><h3>按模块调用频次</h3></div>
-            <div id="module-bars"></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>报错与错误码分布</h3><span class="chip" id="error-count">0 次</span></div>
-            <div id="error-codes"></div>
-            <div class="card-head mt"><h3>最近报错</h3></div>
-            <div id="error-list"></div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-head">
-            <h3>最近调用</h3>
-            <div class="head-actions">
-              <select id="log-day-select" class="select-sm"></select>
-              <button class="btn btn-soft" id="btn-report">生成当日日报</button>
-            </div>
-          </div>
-          <div id="log-table"></div>
-          <div class="chart-foot">日报命令：<code>node scripts/daily-report.js --sync</code>（自动汇总并 git commit，不 push）</div>
         </div>
       </section>
 
@@ -239,7 +223,7 @@
       <section class="view" id="view-feedback">
         <div class="section-intro">
           <h2>使用反馈</h2>
-          <p>把工具给同学实际用一次，收集真实反馈。目标 8 位真实用户——这部分需要真人填写，系统不会代填。</p>
+          <p>把工具给同学实际用一次，收集真实反馈。目标 8 位真实用户——这部分必须真人填写，系统不会代填。</p>
         </div>
         <div class="two-col uneven">
           <div class="card">
@@ -247,7 +231,7 @@
             <form id="form-feedback" class="form">
               <div class="form-row">
                 <label>使用者身份<input id="fb-role" required placeholder="如：大二学生 / 班长" maxlength="20"></label>
-                <label>主要使用的模块<select id="fb-module"><option>整体</option><option>通知提取</option><option>器材借还</option><option>错题归档</option><option>运行日志</option></select></label>
+                <label>主要使用的模块<select id="fb-module"><option>整体</option><option>通知提取</option><option>器材借还</option><option>错题归档</option><option>管理后台</option></select></label>
               </div>
               <label>好用程度（1–5 分）<select id="fb-score"><option value="5">5 · 很好用</option><option value="4">4 · 基本顺手</option><option value="3">3 · 一般</option><option value="2">2 · 不太好</option><option value="1">1 · 很难用</option></select></label>
               <label>最有帮助的地方<textarea id="fb-liked" rows="2" maxlength="160" placeholder="哪一步真的省了你的时间？"></textarea></label>
@@ -260,10 +244,11 @@
             <div class="progress"><div id="fb-progress-bar"></div></div>
             <div class="notice-box">
               <strong>关于「8 位真实用户反馈」</strong>
-              <p>评分要求反馈来自真实使用者。请让 8 位同学各用一次后自行填写（可直接在此页面填，也可用 <code>docs/用户反馈表.md</code> 线下收集后录入）。系统不会生成任何虚构反馈。</p>
+              <p>评分要求反馈来自真实使用者。请让 8 位同学各用一次后自行填写（可在此页面提交，也可用 <code>docs/用户反馈表.md</code> 线下收集后录入）。系统不会生成任何虚构反馈。</p>
             </div>
-            <div class="card-head mt"><h3>已收集</h3></div>
-            <div id="fb-list" class="fb-list"></div>
+            <div class="card-head mt role-only" data-roles="teacher,admin"><h3>已收集</h3></div>
+            <div id="fb-list" class="fb-list role-only" data-roles="teacher,admin"></div>
+            <div class="admin-note role-only" data-roles="student">反馈已提交，感谢你的真实评价。汇总内容仅教师与管理员可见。</div>
           </div>
         </div>
       </section>
@@ -275,47 +260,68 @@
           <p>对应「项目四：解决校园真实痛点的轻量化实用程序研发与日常运行日志验证」。</p>
         </div>
         <div class="card">
-          <div class="card-head"><h3>评分点自查</h3></div>
+          <div class="card-head"><h3>三个角色，各司其职</h3></div>
           <table class="table">
-            <thead><tr><th>要求</th><th>分值</th><th>本项目的落地方式</th><th>状态</th></tr></thead>
+            <thead><tr><th>角色</th><th>入口</th><th>可以做的事</th></tr></thead>
             <tbody>
-              <tr><td>连续 ≥7 天自动化运行日志<br><span class="muted">脱敏时间戳、调用频次、耗时、报错，每日同步 process_logs/</span></td><td>25</td><td>每次请求由 <code>lib/telemetry.js</code> 自动写 JSONL；<code>scripts/daily-report.js --sync</code> 生成日报并每日提交</td><td><span class="tag tag-warn">需连续运行 7 天</span></td></tr>
-              <tr><td>基于日志的 ≥3 次 Git 迭代 Diff</td><td>20</td><td>v1 基础版 → v2 按日志暴露的解析缺陷修复 → v3 按耗时/报错数据优化，详见 README「Git 迭代记录」与 <code>git log --stat</code></td><td><span class="tag tag-ok">已具备</span></td></tr>
-              <tr><td>完整源码 + 8 位真实用户反馈</td><td>15</td><td>源码全部在本仓库；反馈表单 + <code>docs/用户反馈表.md</code> 空白模板，需由 8 位真实同学填写</td><td><span class="tag tag-warn">源码已备 / 反馈待真人填写</span></td></tr>
+              <tr><td><span class="tag tag-blue">学生</span></td><td><code>/index.html</code></td><td>录入并查看自己的通知待办与错题、登记器材借还、提交真实反馈</td></tr>
+              <tr><td><span class="tag tag-ok">教师</span></td><td><code>/index.html</code></td><td>学生全部能力 + 新增/删除器材、查看全部通知与错题、查看反馈汇总</td></tr>
+              <tr><td><span class="tag tag-gray">管理员</span></td><td><code>/admin.html</code></td><td>实时运行日志（SSE 推送）、错误码聚合、账号管理、每日日志汇总与数据总览</td></tr>
             </tbody>
           </table>
+          <div class="admin-note">账号全部由使用者创建：首次打开时由你设置第一位管理员，其余账号由管理员在后台创建。系统不预置任何账号、器材、通知、错题或反馈。</div>
         </div>
-        <div class="two-col">
+        <div class="two-col" style="margin-top:16px">
           <div class="card">
             <div class="card-head"><h3>怎么跑起来</h3></div>
             <pre class="codeblock">node server.js
-# 打开 http://localhost:5173
+# 浏览器打开 http://localhost:5173/login.html
+# 端口被占用时会自动顺延，终端会打印实际地址
 
 # 每日收工前同步日志
 node scripts/daily-report.js --sync
 git push</pre>
-            <p class="hint">零第三方依赖，Node.js 18+ 即可。数据保存在 <code>data/*.json</code>，日志在 <code>process_logs/</code>。</p>
+            <p class="hint">零第三方依赖，Node.js 18+ 即可。业务数据保存在 <code>data/*.json</code>，运行日志在 <code>process_logs/</code>。</p>
           </div>
           <div class="card">
             <div class="card-head"><h3>目录结构</h3></div>
-            <pre class="codeblock">server.js            本地 HTTP 服务
+            <pre class="codeblock">server.js            HTTP 服务 / SSE 实时流
+lib/auth.js          账号、密码哈希、会话与权限
 lib/telemetry.js     自动脱敏运行日志
 lib/extractor.js     中文通知结构化引擎
-lib/api.js           三大工具业务接口
+lib/api.js           业务接口 + 管理后台接口
 lib/store.js         JSON 原子存储
-public/              前端页面（离线可用）
+public/login.html    登录 / 首次初始化
+public/index.html    学生 / 教师工作台
+public/admin.html    管理员实时日志后台
 scripts/             日报 / 冒烟测试
-data/                业务数据
-process_logs/        每日 telemetry + 日报
-docs/                反馈表 / 迭代记录</pre>
+data/                业务数据（全部由用户录入）
+process_logs/        每日 telemetry + 日报</pre>
           </div>
         </div>
-        <div class="card">
+        <div class="card" style="margin-top:16px">
           <div class="card-head"><h3>隐私说明</h3></div>
-          <p class="about-p">日志里不写通知原文、姓名、学号、题目内容与反馈正文，只保留长度、条数、命中规则数、耗时、状态码、错误码等可统计特征；会话标识为不可逆哈希。业务数据仅保存在本机 <code>data/</code>，是否同步到 GitHub 由你决定（<code>.gitignore</code> 默认排除 data/，只提交日志）。</p>
+          <p class="about-p">日志里不写通知原文、姓名、学号、题目内容与反馈正文，只保留长度、条数、命中规则数、耗时、状态码、错误码、角色等可统计特征；会话标识为不可逆哈希，密码以 scrypt 加盐哈希保存。业务数据仅保存在本机 <code>data/</code>，是否同步到 GitHub 由你决定（<code>.gitignore</code> 默认排除 data/，只提交日志）。</p>
         </div>
       </section>
     </main>
+  </div>
+</div>
+
+<!-- 修改密码 -->
+<div class="modal-mask" id="pass-modal">
+  <div class="modal">
+    <h3>修改密码</h3>
+    <p>修改后当前会话保持有效，其它设备的登录会失效。</p>
+    <form id="form-pass" class="form">
+      <label>原密码<input id="pass-old" type="password" required autocomplete="current-password"></label>
+      <label>新密码<input id="pass-new" type="password" required autocomplete="new-password" placeholder="至少 8 位，含字母与数字"></label>
+      <label>确认新密码<input id="pass-new2" type="password" required autocomplete="new-password"></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btn-pass-cancel">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
   </div>
 </div>
 

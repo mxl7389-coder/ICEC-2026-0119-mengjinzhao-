@@ -25,12 +25,13 @@ const prevDay = (() => {
 const prevRows = telemetry.readDay(prevDay);
 
 function stat(list) {
-  const byModule = {}, byAction = {}, byStatus = {}, byErrorCode = {};
+  const byModule = {}, byAction = {}, byStatus = {}, byErrorCode = {}, byRole = {};
   let errs = [];
   for (const r of list) {
     byModule[r.module] = (byModule[r.module] || 0) + 1;
     byAction[r.action] = (byAction[r.action] || 0) + 1;
     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+    byRole[r.role || 'anonymous'] = (byRole[r.role || 'anonymous'] || 0) + 1;
     if (r.status === 'error') {
       const code = r.error_code || 'UNKNOWN';
       byErrorCode[code] = (byErrorCode[code] || 0) + 1;
@@ -40,7 +41,7 @@ function stat(list) {
   const ds = list.map((r) => r.duration_ms).sort((a, b) => a - b);
   const avg = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : 0;
   return {
-    total: list.length, byModule, byAction, byStatus, byErrorCode, errs,
+    total: list.length, byModule, byAction, byStatus, byErrorCode, byRole, errs,
     avg: Math.round(avg * 100) / 100,
     p95: ds.length ? ds[Math.floor(ds.length * 0.95)] : 0,
     max: ds.length ? ds[ds.length - 1] : 0,
@@ -75,6 +76,8 @@ const md = [
   '', '| 模块 | 次数 |', '| --- | ---: |', table(s.byModule),
   '', '## 调用频次 · 按动作',
   '', '| 动作 | 次数 |', '| --- | ---: |', table(s.byAction),
+  '', '## 调用频次 · 按角色',
+  '', '| 角色 | 次数 |', '| --- | ---: |', table(s.byRole),
   '', '## 报错记录',
 ];
 if (s.errs.length) {

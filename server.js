@@ -1,15 +1,21 @@
 'use strict';
 /**
  * 校园事务台 · CampusDesk
- * 零依赖本地服务：node server.js  →  http://localhost:5173
+ * 零依赖本地服务：node server.js  →  http://localhost:5173（占用时自动顺延）
  *
- * 每个 /api 请求结束时由 telemetry 自动写一条脱敏日志（调用频次 / 耗时 / 报错）。
+ * 三个入口：
+ *   /login.html   登录 / 首次初始化（由使用者自己创建第一位管理员）
+ *   /index.html   学生 / 教师工作台
+ *   /admin.html   管理员后台（SSE 实时运行日志）
+ *
+ * 每个 /api 请求结束时由 telemetry 自动写一条脱敏日志（调用频次 / 耗时 / 报错 / 角色）。
  */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const telemetry = require('./lib/telemetry');
+const auth = require('./lib/auth');
 const api = require('./lib/api');
 
 let PORT = Number(process.env.PORT || 5173);
@@ -43,11 +49,22 @@ function send(res, status, body, headers = {}) {
   res.end(payload);
 }
 
-function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+function redirect(res, location) {
+  res.writeHead(302, { 'Location': location, 'Cache-Control': 'no-store' });
+  res.end();
+}
+
+function serveStatic(req, res, pathname, filename, user) {
+  const rel = filename || (pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, ''));
   const file = path.resolve(PUBLIC_DIR, rel);
   if (!file.startsWith(path.resolve(PUBLIC_DIR) + path.sep)) {
     return send(res, 403, { error: 'forbidden' });
+  }
+  // 按解析后的真实文件名做鉴权，避免大小写或编码变体绕过页面级检查
+  const base = path.basename(file).toLowerCase();
+  if (base === 'index.html' || base === 'admin.html') {
+    if (!user) return redirect(res, '/login.html');
+    if (base === 'admin.html' && user.role !== 'admin') return redirect(res, '/index.html');
   }
   fs.readFile(file, (err, buf) => {
     if (err) return send(res, 404, { error: 'not_found', path: pathname });
@@ -80,29 +97,78 @@ function readBody(req) {
   });
 }
 
-function anonSession(req) {
-  const raw = req.headers['x-session-id'] || req.socket.remoteAddress || 'local';
-  return crypto.createHash('sha256').update(String(raw)).digest('hex').slice(0, 12);
+function anonSession(req, user) {
+  const raw = (user ? user.id : '') + '|' + (req.socket.remoteAddress || 'local');
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12);
+}
+
+/* --------------------------- SSE 实时日志流 --------------------------- */
+function handleLogStream(req, res, user, session) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  const write = (event, data) => {
+    if (res.writableEnded || res.destroyed) return;
+    try { res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'); }
+    catch (_) { /* 客户端已断开 */ }
+  };
+  res.write('retry: 3000\n\n');
+
+  const day = telemetry.localDay();
+  const agg = telemetry.aggregate(telemetry.listDays().slice(-7));
+  const todayRows = telemetry.readDay(day);
+  write('snapshot', {
+    server_time: new Date().toISOString(),
+    day,
+    cursor: todayRows.length,
+    version: telemetry.APP_VERSION,
+    aggregate: agg,
+    recent: todayRows.slice(-60).reverse(),
+  });
+
+  const unsubscribe = telemetry.subscribe((record) => write('log', record));
+  const beat = setInterval(() => {
+    if (res.writableEnded || res.destroyed) return;
+    try { res.write(': ping\n\n'); } catch (_) {}
+  }, 15000);
+  const cleanup = () => { clearInterval(beat); unsubscribe(); };
+  req.on('close', cleanup);
+  req.on('error', cleanup);
+
+  // 连接本身也是一次真实调用，计入日志（不写任何用户内容）
+  telemetry.log({
+    session, role: user.role, module: 'admin', action: 'stream',
+    status: 'ok', duration_ms: 0, meta: { sse: 1 },
+  });
 }
 
 const server = http.createServer(async (req, res) => {
   const started = process.hrtime.bigint();
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   const pathname = decodeURIComponent(url.pathname);
+  const cookies = auth.parseCookies(req.headers.cookie);
+  const token = cookies[auth.COOKIE_NAME] || '';
+  const user = auth.resolve(token);
+  const ip = req.socket.remoteAddress || 'local';
+  const session = anonSession(req, user);
   let meta = {};
   let statusCode = 200;
   let errorCode = null;
-  const session = anonSession(req);
 
   const finish = () => {
     const duration = Number(process.hrtime.bigint() - started) / 1e6;
     // 页面加载也计入「使用频次」，但只记路径，不记任何用户内容
-    if (pathname.startsWith('/api/') || pathname === '/') {
+    const isPage = pathname === '/' || /^\/[a-z-]+\.html$/.test(pathname);
+    if (pathname.startsWith('/api/') || isPage) {
       const parts = pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
       telemetry.log({
-        session,
-        module: pathname === '/' ? 'page' : (parts[0] || 'api'),
-        action: pathname === '/' ? 'home' : (parts[1] || req.method.toLowerCase()),
+        session, role: user ? user.role : null,
+        module: isPage ? 'page' : (parts[0] || 'api'),
+        action: isPage ? (pathname === '/' ? 'home' : path.basename(pathname, '.html')) : (parts[1] || req.method.toLowerCase()),
         status: errorCode ? 'error' : 'ok',
         duration_ms: duration,
         error_code: errorCode,
@@ -112,9 +178,21 @@ const server = http.createServer(async (req, res) => {
   };
 
   try {
+    /* ---------- 静态页面与访问控制 ---------- */
     if (!pathname.startsWith('/api/')) {
       res.on('finish', finish);
-      return serveStatic(req, res, pathname);
+      if (pathname === '/') {
+        if (!user) return serveStatic(req, res, pathname, 'login.html', user);
+        return redirect(res, user.role === 'admin' ? '/admin.html' : '/index.html');
+      }
+      return serveStatic(req, res, pathname, null, user);
+    }
+
+    /* ---------- SSE：长连接不走普通 finish 日志 ---------- */
+    if (pathname === '/api/admin/stream' || pathname === '/api/admin/logs/stream') {
+      if (!user) { res.on('finish', finish); return send(res, 401, { error: 'UNAUTHORIZED', message: '请先登录' }); }
+      if (user.role !== 'admin') { res.on('finish', finish); return send(res, 403, { error: 'FORBIDDEN', message: '需要管理员权限' }); }
+      return handleLogStream(req, res, user, session);
     }
 
     const body = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE'
@@ -124,17 +202,14 @@ const server = http.createServer(async (req, res) => {
       pathname,
       query: url.searchParams,
       body,
-      session,
+      session, user, token, ip,
     });
     statusCode = result.status || 200;
     meta = result.meta || {};
-
-    if (result.raw) {
-      res.on('finish', finish);
-      return send(res, statusCode, result.raw.body, result.raw.headers);
-    }
+    const headers = result.headers || {};
     res.on('finish', finish);
-    return send(res, statusCode, result.data);
+    if (result.raw) return send(res, statusCode, result.raw.body, { ...result.raw.headers, ...headers });
+    return send(res, statusCode, result.data, headers);
   } catch (err) {
     errorCode = err.code || err.name || 'INTERNAL';
     statusCode = err.status || 500;
@@ -161,9 +236,10 @@ server.on('error', (err) => {
 server.on('listening', () => {
   console.log('');
   console.log('  校园事务台 CampusDesk 已启动');
-  console.log('  → http://localhost:' + PORT);
+  console.log('  → http://localhost:' + PORT + '/login.html');
+  console.log('  学生/教师工作台 → /index.html    管理员后台 → /admin.html');
   console.log('  日志目录 → ' + telemetry.LOG_DIR);
-  console.log('  按 Ctrl+C 停止（每日同步请运行 node scripts/daily-report.js）');
+  console.log('  按 Ctrl+C 停止（每日同步请运行 node scripts/daily-report.js --sync）');
   console.log('');
 });
 

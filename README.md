@@ -10,7 +10,44 @@
 | 器材"账上有、柜里没有" | **器材借还核对** | 借出/部分归还/全部归还登记，自动核对可用库存、标记逾期、发现账实差异 |
 | 错题抄完就再也不看 | **错题归档** | 按学科+知识点归档，按 1/2/4/7/15/30 天间隔排队复习，标记掌握后出队 |
 
-**技术选型**：Node.js 原生 `http` + 原生前端，零第三方依赖、无 CDN、无 API Key、不联网。Node 18+ 直接跑，数据落在本地 `data/*.json`。
+**技术选型**：Node.js 原生 `http` + 原生前端，零第三方依赖、无 CDN、无 API Key、不联网。Node 18+ 直接跑，业务数据落在本地 `data/*.json`。
+
+---
+
+## v4：前后端分离 + 登录 + 实时日志后台
+
+这一版把「一个页面」拆成三个入口，并加入账号体系：
+
+| 入口 | 使用者 | 内容 |
+| --- | --- | --- |
+| `/login.html` | 所有人 | 登录；**首次打开时由你本人创建第一位管理员** |
+| `/index.html` | 学生 / 教师 | 总览、通知提取、器材借还、错题归档、使用反馈、项目说明 |
+| `/admin.html` | 管理员 | **SSE 实时运行日志**、日志分析、账号管理、数据总览 |
+
+角色权限（服务端二次校验，仅靠隐藏按钮无法越权）：
+
+| 能力 | 学生 | 教师 | 管理员 |
+| --- | :---: | :---: | :---: |
+| 录入并查看**自己**的通知与错题 | ✓ | ✓（看全部） | ✓（看全部） |
+| 登记器材借出 / 归还 | ✓ | ✓ | ✓ |
+| 新增 / 删除器材、删除通知与错题 | — | ✓ | ✓ |
+| 查看反馈汇总 | — | ✓ | ✓ |
+| 实时日志 / 日志分析 / 账号管理 | — | — | ✓ |
+
+- 密码：`scrypt` 加盐哈希，明文不落盘；会话为 `HttpOnly + SameSite=Lax` Cookie，服务端只存 token 哈希，7 天有效。
+- 登录失败限流：同一 IP 10 分钟内 8 次失败后暂时拒绝；账号不存在时也做一次等价哈希计算，避免时序枚举。
+- 学生只能看到自己录入的通知与错题（记录带 `owner_id`），教师/管理员看全部。
+- **实时日志**：`lib/telemetry.js` 落盘后向订阅者广播，`/api/admin/stream` 以 SSE 推送；断线自动重连，重连期间由 `/api/admin/poll?cursor=N` 按游标补齐，不重不漏。
+
+### ⚠️ 零预置数据
+
+**程序不添加任何数据，一切由你和使用者录入。**
+
+- 不预置账号：第一位管理员必须你自己在首次打开时创建；其余账号由管理员在后台创建。
+- 不预置器材、通知、错题、样例文本或反馈：`data/*.json` 初始全部为 `[]`，界面显示明确的空状态与下一步指引。
+- `lib/api.js` 中已彻底移除 `seedEquipment()` 与自动播种逻辑；`bootstrap` 不再下发示例通知。
+- `process_logs/` 里的日志是**程序自动采集的运行痕迹**（每次真实请求一行），不是业务数据，也不是补造的历史记录。
+- 冒烟测试只在 `data/__smoke__/` 隔离目录里造测试账号与记录，跑完即删除，不会污染日常数据。
 
 ---
 
@@ -18,23 +55,20 @@
 
 ```bash
 node server.js
-# 浏览器打开 http://localhost:5173
+# 浏览器打开 http://localhost:5173/login.html
 ```
 
 默认端口 5173；若被本机其它服务占用，会自动顺延到 5174、5175……以终端实际打印的地址为准。也可显式指定：`PORT=8080 node server.js`。
 
-首次启动会自动创建 6 类示例器材。想验证全部接口并产生真实调用日志：
+**第一次打开**：页面显示「创建管理员账号」，填好显示名称、账号、密码后自动进入管理后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者登录后自行录入数据。
 
 ```bash
-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，不污染日常数据
+node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，50 项断言
+node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
+git push                      # 需要提交到 GitHub 时再执行
 ```
 
-收工前同步当天日志：
-
-```bash
-node scripts/daily-report.js --sync   # 生成日报并自动 git commit（不会 push）
-git push
-```
+更详细的操作步骤见 [`docs/使用说明.md`](docs/使用说明.md)。
 
 ---
 
@@ -45,24 +79,25 @@ git push
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v3.0.0","session":"a1b2c3d4e5f6","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88,"parse_ms":1.1,"warning_count":0}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v4.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
 ```
 
-- **调用频次**：按模块 / 动作 / 自然日聚合，页面「运行日志」可直接看。
-- **耗时**：`duration_ms`，日报里给平均值、P95 与峰值。
-- **报错**：`status=error` + `error_code`（如 `EMPTY_NOTICE`、`OUT_OF_STOCK`、`UNKNOWN_ROUTE`），由真实失败请求产生。
-- **脱敏**：日志不写通知原文、姓名、学号、题目、反馈正文；`meta` 只留长度、条数、命中规则数等可统计特征，并有字段名黑名单兜底；`session` 是不可逆哈希。
+- **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
+- **耗时**：`duration_ms`，日报给平均值、P95 与峰值。
+- **报错**：`status=error` + `error_code`，由真实失败请求产生。
+- **脱敏**：不写通知原文、姓名、学号、题目、反馈正文、账号或密码；`meta` 只留长度、条数、命中规则数等可统计特征，并有字段名黑名单兜底；`session` 为不可逆哈希。
+- **实时**：管理员后台的 SSE 流无需刷新，新请求落盘即推送。
 - **每日同步**：`node scripts/daily-report.js --sync` 生成 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git add process_logs/` + `commit`（业务数据按 `.gitignore` 不入库）。
 
-> ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。从今天开始每天用一次、睡前跑一次 `--sync`，7 天后 `process_logs/` 里自然就是 7 个日期文件。`node scripts/smoke-test.js` 产生的是当天的真实自动化调用记录，不是伪造的历史数据。
+> ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。每天用一次、睡前跑一次 `--sync`，7 天后目录里自然就是 7 个日期文件。
 
 ### ② 基于日志的 ≥3 次 Git 迭代 Diff（20 分）
 
-见下方「Git 迭代记录」。每次迭代都对应日志里能观察到的具体现象，而不是随手改格式。可用 `git log --stat` / `git diff <commit> <commit>` 查看。
+见下方「Git 迭代记录」。v1–v3 三次迭代都对应日志里能观察到的具体现象；v4 是按新的角色与实时观测需求做的结构性升级。可用 `git log --stat` / `git diff <commit> <commit>` 查看。
 
 ### ③ 完整源码 + 8 位真实用户反馈（15 分）
 
-源码全部在本仓库。反馈通过页面「使用反馈」表单收集，也可以线下用 [`docs/用户反馈表.md`](docs/用户反馈表.md) 的 8 份空白模板收集后录入。
+源码全部在本仓库。反馈通过工作台「使用反馈」表单收集，也可以线下用 [`docs/用户反馈表.md`](docs/用户反馈表.md) 的 8 份空白模板收集后录入。
 
 > ⚠️ **诚实说明**：8 份反馈必须由 8 位真实同学试用后亲自填写，系统不生成任何虚构评价，`data/feedback.json` 初始为空。
 
@@ -71,43 +106,37 @@ git push
 ## Git 迭代记录
 
 ### v1 · 基础可运行版
-- `server.js` 零依赖 HTTP 服务 + 静态资源 + 统一错误处理
-- `lib/telemetry.js` 自动脱敏日志、`lib/store.js` JSON 原子存储
-- `lib/extractor.js` 中文通知规则引擎（绝对/相对日期、时间段、地点、对象、分类、截止、待办、ICS）
-- 三大工具 API + 六个前端视图 + 冒烟测试 + 日报脚本
+- 零依赖 HTTP 服务 + 静态资源 + 统一错误处理
+- `telemetry` 自动脱敏日志、`store` JSON 原子存储
+- `extractor` 中文通知规则引擎（绝对/相对日期、时间段、地点、对象、分类、截止、待办、ICS）
+- 三大工具 API + 前端视图 + 冒烟测试 + 日报脚本
 
 ### v2 · 依据首日日志修复解析缺陷
 
-**日志证据**（`process_logs/` 首日文件）：共 25 次调用、3 次报错（`EMPTY_NOTICE` / `OUT_OF_STOCK` / `UNKNOWN_ROUTE`）；三次 `notice/parse` 的 `confidence` 为 **88 / 88 / 63**，第三条 `hit_rules=5` 但 `warning_count=0` —— 说明规则引擎"自信地"漏掉了字段，属于日志看不出的静默失败。逐条复核后定位到 6 个缺陷：
-
-| # | 现象 | 修复 |
-| --- | --- | --- |
-| 1 | 地点把 `14:30在` 吞成 `30在教学楼A301教室` | 通用地点正则要求中文/字母开头，并过滤介词前缀与子串重复 |
-| 2 | 体测通知把截止日 `11/20` 当成活动日 | `parseDates` 记录命中位置并按原文顺序排序，正确回到"下周三" `11/18` |
-| 3 | `请全体本科生于12月1日前…` 的截止日期为空 | 重写 `parseDeadline`：显式截止短语优先 + 新增「日期紧贴`前`」分支 |
-| 4 | `全体本科生` 未识别为对象 | 扩充对象正则，支持本科/研究生/专科等后缀 |
-| 5 | 标题硬截 30 字，把半句话切进标题 | 优先「关于…的通知」，否则按句读切分并加分类前缀 |
-| 6 | 体测通知被"报名"抢成报名申请 | 分类关键词加权，活动/调课/器材类权重高于通用动词 |
-
-同时让日志变得**可观测**：`meta` 新增 `missing_field_count` / `missing_keys`（只记字段代号），并对"含截止表述却没解析出截止""出现多个日期"给出 warning，避免下次再出现 `warning_count=0` 的静默失败。日志 `app_version` 随之升到 `v2.0.0`。
-
-**复测结果**（`node scripts/smoke-test.js`）：三条示例 `confidence` 全部为 **88**；活动日期 `11-14 / 11-18 / 12-01`，截止 `11-13 / 11-20 / 12-01`，地点 `教学楼A301教室 / 东区操场 / 学生事务中心一楼大厅`。
+**日志证据**：首日 25 次调用、3 次报错；三次 `notice/parse` 的 `confidence` 为 **88 / 88 / 63**，第三条 `hit_rules=5` 但 `warning_count=0` —— 规则引擎"自信地"漏掉了字段，属于静默失败。逐条复核后定位 6 个缺陷：地点吞时间数字、活动日被截止日抢占、`于…前` 截止未识别、`全体本科生` 未识别、标题硬截半句、分类被通用动词抢走。修复后三条示例置信度全部 **88**，并在 `meta` 新增 `missing_field_count` / `missing_keys` 让规则缺口可从日志直接观察。
 
 ### v3 · 依据耗时与报错数据优化
 
-**日志证据**：v2 日志里写类请求明显慢于读类 —— `notice/save` 15ms、`loan/create` 13.65ms、`feedback/add` 12.94ms、`mistake/add` 12.37ms，而 `health` / `notice/list` 等读请求普遍 <2ms，峰值 `bootstrap` 28.19ms。同时三类报错（`EMPTY_NOTICE` / `OUT_OF_STOCK` / `UNKNOWN_ROUTE`）在日志页只能看到总次数，无法按错误码定位高频问题。
+**日志证据**：写类请求 12–15ms vs 读类 <2ms，峰值 `bootstrap` 28.19ms；三类报错无法按错误码聚合。改动：请求级库存快照缓存（`reconcile_calls` 从 2 降到 ≤1）、`availableOf()` 单件库存校验、日报改异步 `execFile` 避免阻塞事件循环、`by_error_code` 聚合、`meta.reconcile_calls` 可观测指标；并修复总览待办不刷新、日志日期下拉跳回今天两处前端状态问题。冒烟测试 27/27 通过。
 
-| # | 优化 | 做法 |
+> 耗时实测：平均 `5.49ms (v1) → 5.03ms (v2) → 5.10ms (v3)`，`bootstrap` `28.19ms → 24.84ms`。**不夸大提速幅度** —— 数据量小的时候重复计算本身很便宜，这次改动的价值在于数据量增长后不再随流水线性放大。
+
+### v4 · 登录体系、前后端拆分与实时日志
+
+**需求驱动**：需要学生/教师入口、管理员后台实时观看运行日志，且明确要求「不添加任何数据」。
+
+| # | 改动 | 文件 |
 | --- | --- | --- |
-| 1 | 单请求重复计算 | `handle` / `route` 拆分，加入请求级库存快照缓存；`bootstrap` 与 `dashboard` 共用一次 `reconcile()`，`equipment/list` 从算两次降为一次 |
-| 2 | 借出校验过重 | 新增 `availableOf()`，只算目标器材的可用量，不再为校验单件而重建整张流水表 |
-| 3 | 日报阻塞事件循环 | `logs/report` 由 `execFileSync` 改为异步 `execFile` + Promise |
-| 4 | 报错不可聚合 | `telemetry.aggregate()` 与日报新增 `by_error_code`，日志页新增错误码分布条 |
-| 5 | 优化效果不可见 | 每条日志的 `meta` 新增 `reconcile_calls`（实际计算次数），冒烟测试新增 3 项断言直接校验它 ≤1 |
+| 1 | `scrypt` 加盐密码、Cookie 会话、角色权限、首次初始化由用户创建管理员、登录限流 | `lib/auth.js`（新增） |
+| 2 | 路由层统一鉴权；学生数据按 `owner_id` 隔离；教师/管理员的管理动作单独授权；新增 `admin/*` 接口 | `lib/api.js` |
+| 3 | SSE 实时日志流 + 断线轮询兜底 + 静态页面按真实文件名鉴权（防大小写/编码绕过） | `server.js` |
+| 4 | telemetry 落盘后广播订阅者，日志新增 `role` 字段；日报增加按角色统计 | `lib/telemetry.js`、`scripts/daily-report.js` |
+| 5 | 按 8px 间距、1.25 字阶、统一设计令牌重构三套界面；所有列表给出「由你录入」的空状态 | `public/style.css` |
+| 6 | 登录/初始化页、学生教师工作台、管理员后台（实时控制台 / 日志分析 / 账号管理 / 数据总览） | `public/login.*`、`public/index.html`、`public/app.js`、`public/admin.*` |
+| 7 | **移除全部预置数据**：删掉 `seedEquipment()` 与自动播种、清空已有器材种子数据（备份在 `.workbuddy/backups/`）、bootstrap 不再下发示例通知 | `lib/api.js`、`data/` |
+| 8 | 冒烟测试重写为 50 项断言，覆盖鉴权、越权、零数据、SSE 推送、游标补齐、会话失效 | `scripts/smoke-test.js` |
 
-日志 `app_version` 升到 `v3.0.0`。**复测**：冒烟测试 27/27 项通过，所有 `v3.0.0` 请求的 `reconcile_calls` 均 ≤1，错误码聚合覆盖 3 类。
-
-> 耗时实测：平均 `5.49ms (v1) → 5.03ms (v2) → 5.10ms (v3)`，`bootstrap` `28.19ms → 24.84ms`。**不夸大提速幅度** —— 当前只有 6 类器材、几十条流水，重复计算本身很便宜，主要耗时来自同步写盘与首次启动；这次改动的价值在于数据量增长后不再随流水线性放大，以及去掉 `execFileSync` 对整个事件循环的阻塞，并让 `reconcile_calls` 成为可长期观测的指标。
+**复测**：`node scripts/smoke-test.js` **50/50 通过**；三个页面共 135 个 DOM id 引用全部核对存在；未登录访问 `/index.html`、`/admin.html` 及其大小写变体均 302 到登录页，学生访问后台 302 到工作台。
 
 ---
 
@@ -115,28 +144,34 @@ git push
 
 | 位置 | 内容 | 是否提交 GitHub |
 | --- | --- | --- |
-| `data/*.json` | 业务数据（通知、借还、错题、反馈） | **否**，`.gitignore` 已排除 |
+| `data/*.json` | 业务数据（通知、器材、借还、错题、反馈、**账号与会话**） | **否**，`.gitignore` 已排除 |
 | `process_logs/*.jsonl` | 脱敏运行日志 | 是，作业要求 |
 | `process_logs/summary-*.md` | 每日自动汇总 | 是 |
 
-业务数据只留在本机；填写借用人时建议用昵称或学号后四位，不要填真实姓名全名。
+账号密码以哈希保存在本机 `data/users.json`，会话只存 token 哈希。业务数据只留在本机；填写借用人时建议用昵称或学号后四位，不要填真实姓名全名。
 
 ---
 
 ## 目录结构
 
 ```
-server.js              本地 HTTP 服务（默认 5173）
-lib/telemetry.js       自动脱敏运行日志 + 聚合统计
-lib/extractor.js       中文通知结构化引擎
-lib/api.js             三大工具业务接口 + 看板 + 日志 + 反馈
-lib/store.js           JSON 原子读写
-public/                前端（index.html / style.css / app.js，离线可用）
-scripts/smoke-test.js  全接口冒烟测试（真实产生调用日志）
-scripts/daily-report.js 每日日志汇总 + 一键 git 同步
-data/                  业务数据（本机）
-process_logs/          每日 telemetry + 日报
-docs/用户反馈表.md      8 份真实反馈空白模板
+server.js                HTTP 服务 / 静态鉴权 / SSE 实时流
+lib/auth.js              账号、密码哈希、会话与角色权限
+lib/telemetry.js         自动脱敏运行日志 + 订阅广播 + 聚合
+lib/extractor.js         中文通知结构化引擎
+lib/api.js               鉴权 / 业务接口 / 管理后台接口
+lib/store.js             JSON 原子读写
+public/login.html        登录 / 首次初始化
+public/index.html        学生 / 教师工作台
+public/admin.html        管理员实时日志后台
+public/style.css         统一设计系统（8px 栅格 / 设计令牌）
+public/{login,app,admin}.js
+scripts/smoke-test.js    50 项冒烟测试（隔离数据目录）
+scripts/daily-report.js  每日日志汇总 + 一键 git 同步
+data/                    业务数据，全部由使用者录入
+process_logs/            每日 telemetry + 日报
+docs/使用说明.md         首次使用与日常操作步骤
+docs/用户反馈表.md        8 份真实反馈空白模板
 ```
 
 ## 命令速查

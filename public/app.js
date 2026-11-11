@@ -1,22 +1,15 @@
 'use strict';
-/* 校园事务台前端：原生 JS，无框架、无 CDN，断网也能用 */
+/* 学生 / 教师工作台：原生 JS，无框架、无 CDN，断网也能用 */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (v) => String(v === null || v === undefined ? '' : v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-const SESSION_KEY = 'campusdesk-session';
-let sessionId = localStorage.getItem(SESSION_KEY);
-if (!sessionId) {
-  sessionId = 's' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-  localStorage.setItem(SESSION_KEY, sessionId);
-}
-
 const S = {
-  view: 'dashboard', dashboard: null, notices: [], equipment: null,
-  mistakes: [], feedback: [], logs: null, dayRows: [], samples: [],
-  parsed: null, today: '', version: '',
+  view: 'dashboard', user: null, permissions: [], dashboard: null,
+  notices: [], equipment: null, mistakes: [], feedback: [],
+  parsed: null, today: '', version: '', empty: true,
 };
 
 const ICON = {
@@ -34,21 +27,25 @@ const TITLES = {
   notice: ['通知提取', '把一段通知拆成可执行的待办'],
   equipment: ['器材借还核对', '借出、归还、逾期与库存差异自动对账'],
   mistake: ['错题归档', '按遗忘曲线排队复习，直到真正掌握'],
-  logs: ['运行日志', '程序自动采集的调用频次、耗时与报错（已脱敏）'],
   feedback: ['使用反馈', '来自真实使用者的评价与改进建议'],
-  about: ['项目说明', '对应项目四的评分要求与技术说明'],
+  about: ['项目说明', '角色权限、运行方式与隐私说明'],
 };
 
 async function api(path, opts = {}) {
   const res = await fetch('/api/' + path, {
     method: opts.method || 'GET',
-    headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   let data = {};
   try { data = await res.json(); } catch (_) {}
+  if (res.status === 401) { window.location.href = '/login.html'; throw new Error('登录已失效'); }
   if (!res.ok) throw new Error(data.message || data.error || '请求失败 (' + res.status + ')');
   return data;
+}
+function can(perm) {
+  return S.permissions.includes('*') || S.permissions.includes(perm);
 }
 
 let toastTimer;
@@ -66,10 +63,6 @@ function guard(fn) {
   };
 }
 function fmtDate(iso) { return iso ? String(iso).slice(5).replace('-', '/') : '—'; }
-function fmtTime(ts) {
-  const d = new Date(ts);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0');
-}
 function lastDays(n) {
   const out = [];
   for (let i = n - 1; i >= 0; i--) {
@@ -105,7 +98,7 @@ function switchView(name) {
 async function refreshView(name) {
   try {
     if (name === 'dashboard') {
-      // 总览的待办/复习列表来自业务数据，必须与看板一起刷新，否则新增后回到首页仍是旧列表
+      // 总览的待办/复习列表来自业务数据，必须与看板一起刷新
       const [d, n, m] = await Promise.all([
         api('dashboard'), api('notice/list'), api('mistake/list'),
       ]);
@@ -117,11 +110,11 @@ async function refreshView(name) {
       S.equipment = await api('equipment/list'); renderEquipment();
     } else if (name === 'mistake') {
       const r = await api('mistake/list'); S.mistakes = r.items; renderMistakes();
-    } else if (name === 'logs') {
-      const [agg, day] = await Promise.all([api('logs?days=7'), api('logs/day?date=' + S.today)]);
-      S.logs = agg; S.dayRows = day.rows; renderLogs();
     } else if (name === 'feedback') {
-      const r = await api('feedback/list'); S.feedback = r.items; renderFeedback();
+      if (can('feedback.list')) {
+        const r = await api('feedback/list'); S.feedback = r.items;
+      }
+      renderFeedback();
     }
   } catch (err) { toast(err.message, true); }
   refreshBadges();
@@ -134,8 +127,8 @@ async function refreshBadges() {
     $('#badge-notice').textContent = d.notice.pending;
     $('#badge-loan').textContent = d.equipment.overdue;
     $('#badge-mistake').textContent = d.mistake.due_today;
-    $('#hero-calls').textContent = d.telemetry.total_calls;
-    $('#hero-days').textContent = d.telemetry.days_with_data;
+    $('#hero-todo').textContent = d.notice.pending;
+    $('#hero-review').textContent = d.mistake.due_today;
     $('#side-logdays').textContent = d.telemetry.days_with_data;
   } catch (_) {}
 }
@@ -150,9 +143,9 @@ function statCard(color, iconBg, icon, label, num, suffix, foot) {
 
 function renderDashboard() {
   const d = S.dashboard; if (!d) return;
-  $('#today-text').textContent = d.today + ' · ' + ['周日','周一','周二','周三','周四','周五','周六'][new Date().getDay()];
-  $('#hero-calls').textContent = d.telemetry.total_calls;
-  $('#hero-days').textContent = d.telemetry.days_with_data;
+  $('#today-text').textContent = d.today + ' · ' + ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
+  $('#hero-todo').textContent = d.notice.pending;
+  $('#hero-review').textContent = d.mistake.due_today;
   $('#side-logdays').textContent = d.telemetry.days_with_data;
   $('#stat-grid').innerHTML = [
     statCard('#2563d9', '#eaf1ff', 'notice', '待处理通知', d.notice.pending, '条', '其中近 3 天到期 ' + d.notice.due_soon + ' 条'),
@@ -173,7 +166,7 @@ function renderDashboard() {
   $('#dash-todos').innerHTML = pending.length ? pending.map((n) =>
     '<div class="mini-item"><i class="dot' + (n.deadline && n.deadline <= addDays(d.today, 2) ? ' warn' : '') + '"></i>' +
     '<span class="txt">' + esc(n.title) + '</span><span class="date">' + (n.deadline ? '截止 ' + fmtDate(n.deadline) : fmtDate(n.event_date)) + '</span></div>').join('')
-    : '<div class="mini-empty">暂无待办，去「通知提取」添加一条 →</div>';
+    : '<div class="mini-empty">暂无待办，去「通知提取」粘贴一条通知 →</div>';
 
   const due = S.mistakes.filter((m) => m.due).slice(0, 4);
   $('#dash-reviews').innerHTML = due.length ? due.map((m) =>
@@ -183,11 +176,6 @@ function renderDashboard() {
 }
 
 /* ------------------------------ 通知提取 ------------------------------ */
-function renderSamples() {
-  $('#sample-row').innerHTML = S.samples.map((s, i) =>
-    '<button class="sample-btn" data-sample="' + i + '">示例：' + esc(s.label) + '</button>').join('');
-}
-
 function renderParseResult(n) {
   const fields = [
     ['分类', n.category, true],
@@ -219,9 +207,10 @@ function renderParseResult(n) {
 function renderNoticeList() {
   $('#notice-total').textContent = S.notices.length + ' 条';
   if (!S.notices.length) {
-    $('#notice-list').innerHTML = '<div class="table-empty">还没有保存的通知，先在上方解析一条吧</div>';
+    $('#notice-list').innerHTML = '<div class="table-empty"><b>还没有保存的通知</b><br>粘贴一条真实通知 → 结构化提取 → 保存到待办</div>';
     return;
   }
+  const canDelete = can('notice.delete');
   $('#notice-list').innerHTML = S.notices.map((n) =>
     '<div class="notice-item ' + (n.done ? 'done' : '') + '">' +
     '<div class="notice-check ' + (n.done ? 'on' : '') + '" data-toggle="' + esc(n.id) + '">' + (n.done ? '<svg><use href="#i-check"/></svg>' : '') + '</div>' +
@@ -230,10 +219,12 @@ function renderNoticeList() {
     (n.event_date ? '<span><b>时间</b> ' + esc(n.event_date + (n.event_time ? ' ' + n.event_time : '')) + '</span>' : '') +
     (n.location ? '<span><b>地点</b> ' + esc(n.location) + '</span>' : '') +
     (n.deadline ? '<span><b>截止</b> ' + esc(n.deadline) + '</span>' : '') +
+    (n.owner_name ? '<span><b>录入</b> ' + esc(n.owner_name) + '</span>' : '') +
     '<span>提取于 ' + esc(String(n.created_at).slice(0, 10)) + '</span></div>' +
     '<ul class="notice-todos">' + (n.todos || []).map((t) => '<li>' + esc(t) + '</li>').join('') + '</ul></div>' +
     '<div class="notice-ops"><a class="btn btn-ghost btn-sm" href="/api/notice/ics?id=' + encodeURIComponent(n.id) + '" download>日历</a>' +
-    '<button class="btn btn-ghost btn-sm" data-del-notice="' + esc(n.id) + '">删除</button></div></div>').join('');
+    (canDelete ? '<button class="btn btn-ghost btn-sm" data-del-notice="' + esc(n.id) + '">删除</button>' : '') +
+    '</div></div>').join('');
 }
 
 /* ------------------------------ 器材借还 ------------------------------ */
@@ -244,7 +235,7 @@ function renderEquipment() {
   $('#recon-bar').innerHTML = ICON[issue ? 'alert' : 'box'] +
     '<span>库存核对：<b>' + e.total_kinds + '</b> 类器材 / 共 <b>' + e.total_units + '</b> 件，当前在借 <b>' + e.on_loan_units + '</b> 件，' +
     '逾期 <b>' + e.overdue_count + '</b> 笔，库存差异 <b>' + e.discrepancy_count + '</b> 项。' +
-    (issue ? '请优先处理标红记录。' : '账实一致，无需处理。') + '</span>';
+    (e.total_kinds === 0 ? '清单为空，请由教师或管理员先添加器材。' : issue ? '请优先处理标红记录。' : '账实一致，无需处理。') + '</span>';
   $('#eq-count').textContent = e.total_kinds + ' 类';
   $('#eq-grid').innerHTML = e.items.length ? e.items.map((it) => {
     const ratio = it.total ? Math.round(it.available / it.total * 100) : 0;
@@ -253,7 +244,7 @@ function renderEquipment() {
       '<div class="eq-nums"><b>' + it.available + '</b><small>/ ' + it.total + ' ' + esc(it.unit) + ' 可用</small></div>' +
       '<div class="eq-bar"><div style="width:' + ratio + '%"></div></div>' +
       '<div class="eq-foot"><span>借出 ' + it.on_loan + '</span><span>' + (it.status === 'ok' ? '充足' : it.status === 'low' ? '偏少' : '已借空') + '</span></div></div>';
-  }).join('') : '<div class="table-empty">还没有器材，用左侧表单添加</div>';
+  }).join('') : '<div class="table-empty" style="grid-column:1/-1"><b>器材清单为空</b><br>系统不会预置器材，请由教师或管理员在「新增器材」中录入</div>';
 
   const sel = $('#loan-item');
   const prev = sel.value;
@@ -263,7 +254,7 @@ function renderEquipment() {
 
   $('#loan-count').textContent = e.loans.length + ' 条';
   if (!e.loans.length) {
-    $('#loan-table').innerHTML = '<div class="table-empty">暂无借还记录</div>';
+    $('#loan-table').innerHTML = '<div class="table-empty"><b>暂无借还记录</b><br>先有器材清单，再由使用者登记借出</div>';
     return;
   }
   $('#loan-table').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr>' +
@@ -289,7 +280,7 @@ function renderMistakes() {
     '<p>' + esc(m.subject) + ' · ' + esc(m.knowledge) + ' · 第 ' + (m.stage + 1) + ' 轮复习' + (m.wrong_reason ? ' · 错因：' + esc(m.wrong_reason) : '') + '</p>' +
     '<div class="due-actions"><button class="btn btn-soft btn-sm" data-review="ok" data-id="' + esc(m.id) + '">已掌握，下一轮</button>' +
     '<button class="btn btn-ghost btn-sm" data-review="again" data-id="' + esc(m.id) + '">还没记住，重来</button></div></div>').join('')
-    : '<div class="table-empty">今天没有到期的复习任务 ✓</div>';
+    : '<div class="table-empty"><b>今天没有到期的复习任务</b><br>录入第一道错题后，明天会进入复习队列</div>';
 
   const subjects = {};
   S.mistakes.forEach((m) => { subjects[m.subject] = (subjects[m.subject] || 0) + 1; });
@@ -300,64 +291,18 @@ function renderMistakes() {
     : '<div class="table-empty">还没有归档错题</div>';
 
   if (!S.mistakes.length) {
-    $('#mistake-table').innerHTML = '<div class="table-empty">还没有错题，用左侧表单录入第一题</div>';
+    $('#mistake-table').innerHTML = '<div class="table-empty"><b>还没有错题</b><br>用左侧表单录入第一题，所有内容由你填写</div>';
     return;
   }
+  const canDelete = can('mistake.delete');
   $('#mistake-table').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr>' +
-    '<th>题目摘要</th><th>学科 / 知识点</th><th>错因</th><th>复习</th><th>下次复习</th><th>状态</th><th></th></tr></thead><tbody>' +
+    '<th>题目摘要</th><th>学科 / 知识点</th><th>错因</th><th>复习</th><th>下次复习</th><th>状态</th>' + (canDelete ? '<th></th>' : '') + '</tr></thead><tbody>' +
     S.mistakes.map((m) => '<tr><td><b>' + esc(m.title) + '</b></td><td>' + esc(m.subject) + ' / ' + esc(m.knowledge) + '</td>' +
       '<td>' + esc(m.wrong_reason || '—') + '</td><td>' + m.review_count + ' 次</td>' +
       '<td class="nowrap">' + esc(m.next_review) + '</td>' +
       '<td><span class="tag ' + (m.mastered ? 'tag-ok' : m.due ? 'tag-warn' : 'tag-gray') + '">' + (m.mastered ? '已掌握' : m.due ? '待复习' : '排队中') + '</span></td>' +
-      '<td><button class="btn btn-ghost btn-sm" data-del-mistake="' + esc(m.id) + '">删除</button></td></tr>').join('') +
+      (canDelete ? '<td><button class="btn btn-ghost btn-sm" data-del-mistake="' + esc(m.id) + '">删除</button></td>' : '') + '</tr>').join('') +
     '</tbody></table></div>';
-}
-
-/* ------------------------------ 运行日志 ------------------------------ */
-function renderLogs() {
-  const a = S.logs; if (!a) return;
-  $('#log-stats').innerHTML = [
-    statCard('#2563d9', '#eaf1ff', 'chart', '近 7 天调用', a.total_calls, '次', '覆盖 ' + a.days_with_data + ' 个自然日'),
-    statCard('#0d9488', '#e2f6f2', 'clock', '平均耗时', a.avg_duration_ms, 'ms', 'P95 ' + a.p95_duration_ms + 'ms / 峰值 ' + a.max_duration_ms + 'ms'),
-    statCard('#d94a4a', '#fdecec', 'alert', '报错次数', a.by_status.error || 0, '次', '成功率 ' + (a.total_calls ? Math.round((1 - (a.by_status.error || 0) / a.total_calls) * 100) : 100) + '%'),
-    statCard('#e08a12', '#fff3dc', 'box', '日志文件', a.all_days.length, '天', '每日自动写入 process_logs/'),
-  ].join('');
-
-  const mods = Object.entries(a.by_module).sort((x, y) => y[1] - x[1]);
-  const max = Math.max(1, ...mods.map((m) => m[1]));
-  $('#module-bars').innerHTML = mods.length ? mods.map(([k, v]) =>
-    '<div class="bar-row"><span class="bar-name">' + esc(k) + '</span><span class="bar-track"><span class="bar-fill" style="width:' + (v / max * 100) + '%"></span></span><span class="bar-val">' + v + '</span></div>').join('')
-    : '<div class="table-empty">暂无调用数据</div>';
-
-  $('#error-count').textContent = (a.by_status.error || 0) + ' 次';
-  const codes = Object.entries(a.by_error_code || {}).sort((x, y) => y[1] - x[1]);
-  const codeMax = Math.max(1, ...codes.map((c) => c[1]));
-  $('#error-codes').innerHTML = codes.length ? codes.map(([k, v]) =>
-    '<div class="bar-row"><span class="bar-name" style="width:112px">' + esc(k) + '</span>' +
-    '<span class="bar-track"><span class="bar-fill" style="width:' + (v / codeMax * 100) + '%"></span></span>' +
-    '<span class="bar-val">' + v + '</span></div>').join('')
-    : '<div class="table-empty">窗口内无报错 ✓</div>';
-  $('#error-list').innerHTML = a.errors.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>模块/动作</th><th>错误码</th></tr></thead><tbody>' +
-    a.errors.slice().reverse().slice(0, 8).map((e) => '<tr><td class="nowrap">' + esc(fmtTime(e.ts)) + '</td><td>' + esc(e.module + ' / ' + e.action) + '</td><td><span class="tag tag-bad">' + esc(e.error_code || '-') + '</span></td></tr>').join('') +
-    '</tbody></table></div>' : '<div class="table-empty">当前窗口内没有报错 ✓</div>';
-
-  // 保留用户当前选中的日期，避免 renderLogs 重绘后跳回今天
-  const selectedDay = $('#log-day-select').value || S.today;
-  const dayOptions = a.all_days.slice().reverse();
-  $('#log-day-select').innerHTML = (dayOptions.length ? dayOptions : [S.today])
-    .map((d) => '<option value="' + d + '"' + (d === selectedDay ? ' selected' : '') + '>' + d + '</option>').join('');
-
-  const rows = S.dayRows.slice(-25).reverse();
-  $('#log-table').innerHTML = rows.length ? '<div class="table-wrap"><table class="table"><thead><tr>' +
-    '<th>时间</th><th>模块</th><th>动作</th><th>状态</th><th>耗时</th><th>错误码</th><th>脱敏特征</th></tr></thead><tbody>' +
-    rows.map((r) => {
-      const feats = Object.entries(r.meta || {}).filter(([, v]) => typeof v === 'number' || typeof v === 'boolean').slice(0, 3)
-        .map(([k, v]) => k + '=' + v).join(' · ');
-      return '<tr><td class="nowrap">' + esc(fmtTime(r.ts)) + '</td><td>' + esc(r.module) + '</td><td>' + esc(r.action) + '</td>' +
-        '<td><span class="tag ' + (r.status === 'ok' ? 'tag-ok' : 'tag-bad') + '">' + r.status + '</span></td>' +
-        '<td class="nowrap">' + r.duration_ms + 'ms</td><td>' + esc(r.error_code || '—') + '</td>' +
-        '<td class="muted">' + esc(feats || '—') + '</td></tr>';
-    }).join('') + '</tbody></table></div>' : '<div class="table-empty">今天还没有调用记录</div>';
 }
 
 /* ------------------------------ 使用反馈 ------------------------------ */
@@ -365,6 +310,7 @@ function renderFeedback() {
   const n = S.feedback.length;
   $('#fb-progress').textContent = n + ' / 8';
   $('#fb-progress-bar').style.width = Math.min(100, n / 8 * 100) + '%';
+  if (!can('feedback.list')) return;
   $('#fb-list').innerHTML = n ? S.feedback.map((f) =>
     '<div class="fb-card"><div class="fb-head"><span>' + esc(f.role) + ' · ' + esc(f.module) + '</span>' +
     '<span class="tag ' + (f.score >= 4 ? 'tag-ok' : f.score >= 3 ? 'tag-warn' : 'tag-bad') + '">' + f.score + ' 分</span></div>' +
@@ -377,19 +323,45 @@ function renderFeedback() {
 /* -------------------------------- 事件 -------------------------------- */
 function bindEvents() {
   $('#nav').addEventListener('click', (e) => {
-    const btn = e.target.closest('.nav-item'); if (btn) switchView(btn.dataset.view);
+    const btn = e.target.closest('button.nav-item'); if (btn) switchView(btn.dataset.view);
   });
   document.addEventListener('click', (e) => {
     const go = e.target.closest('[data-go]');
     if (go) switchView(go.dataset.go);
   });
 
-  $('#sample-row').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-sample]'); if (!b) return;
-    $('#notice-input').value = S.samples[Number(b.dataset.sample)].text;
-    $('#notice-count').textContent = $('#notice-input').value.length;
-    toast('已填入示例通知，点「结构化提取」试试');
+  // 用户菜单
+  $('#user-chip').addEventListener('click', (e) => {
+    if (e.target.closest('.menu-item')) return;
+    $('#user-menu').classList.toggle('open');
   });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#user-chip')) $('#user-menu').classList.remove('open');
+  });
+  $('#btn-logout').addEventListener('click', guard(async () => {
+    await api('auth/logout', { method: 'POST', body: {} });
+    window.location.href = '/login.html';
+  }));
+  $('#btn-pass').addEventListener('click', () => {
+    $('#user-menu').classList.remove('open');
+    $('#pass-modal').classList.add('open');
+  });
+  $('#btn-pass-cancel').addEventListener('click', () => $('#pass-modal').classList.remove('open'));
+  $('#pass-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'pass-modal') $('#pass-modal').classList.remove('open');
+  });
+  $('#form-pass').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    const a = $('#pass-new').value, b = $('#pass-new2').value;
+    if (a !== b) { toast('两次输入的新密码不一致', true); return; }
+    await api('auth/password', { method: 'POST', body: {
+      old_password: $('#pass-old').value, new_password: a,
+    } });
+    $('#form-pass').reset();
+    $('#pass-modal').classList.remove('open');
+    toast('密码已修改');
+  }));
+
   $('#notice-input').addEventListener('input', (e) => { $('#notice-count').textContent = e.target.value.length; });
   $('#btn-parse').addEventListener('click', guard(async () => {
     const text = $('#notice-input').value.trim();
@@ -423,6 +395,7 @@ function bindEvents() {
 
   $('#form-loan').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
+    if (!$('#loan-item').value) { toast('器材清单为空，请先由教师或管理员添加器材', true); return; }
     await api('loan/create', { method: 'POST', body: {
       item_id: $('#loan-item').value, borrower: $('#loan-borrower').value,
       qty: Number($('#loan-qty').value), due_date: $('#loan-due').value,
@@ -473,15 +446,6 @@ function bindEvents() {
     toast('已删除'); refreshView('mistake');
   }));
 
-  $('#log-day-select').addEventListener('change', guard(async (e) => {
-    const r = await api('logs/day?date=' + encodeURIComponent(e.target.value));
-    S.dayRows = r.rows; renderLogs();
-  }));
-  $('#btn-report').addEventListener('click', guard(async () => {
-    const r = await api('logs/report', { method: 'POST', body: {} });
-    toast(r.ok ? '当日日报已生成到 process_logs/' : '生成失败');
-  }));
-
   $('#form-feedback').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
     await api('feedback/add', { method: 'POST', body: {
@@ -494,18 +458,40 @@ function bindEvents() {
   }));
 }
 
+/* ------------------------------ 角色界面 ------------------------------ */
+function applyRole() {
+  const u = S.user;
+  $('#user-name').textContent = u.display_name || u.username;
+  $('#user-role').textContent = u.role_label + ' · ' + u.username;
+  $('#user-avatar').textContent = (u.display_name || u.username).slice(0, 1);
+  $$('.role-only').forEach((el) => {
+    const roles = (el.dataset.roles || '').split(',').filter(Boolean);
+    el.classList.toggle('hidden', !roles.includes(u.role));
+  });
+  if (u.role === 'admin') {
+    $('#nav-admin').classList.remove('hidden');
+    $('#link-admin').classList.remove('hidden');
+  }
+  $('#zero-banner').classList.toggle('hidden', !S.empty);
+}
+
 /* -------------------------------- 启动 -------------------------------- */
 (async function init() {
+  try {
+    const me = await api('auth/me');
+    S.user = me.user; S.permissions = me.permissions || [];
+  } catch (_) { return; } // api() 已负责 401 跳转
   bindEvents();
   try {
     const b = await api('bootstrap');
     S.dashboard = b.dashboard; S.notices = b.notices; S.equipment = b.equipment;
-    S.mistakes = b.mistakes; S.feedback = b.feedback; S.samples = b.samples;
-    S.today = b.today; S.version = b.version;
+    S.mistakes = b.mistakes; S.feedback = b.feedback || [];
+    S.today = b.today; S.version = b.version; S.empty = b.empty;
     $('#side-version').textContent = S.version.replace(/^v/, '');
     $('#today-text').textContent = S.today;
     $('#loan-due').value = addDays(S.today, 7);
-    renderSamples(); renderDashboard(); renderNoticeList();
+    applyRole();
+    renderDashboard(); renderNoticeList();
     $('#badge-notice').textContent = b.dashboard.notice.pending;
     $('#badge-loan').textContent = b.dashboard.equipment.overdue;
     $('#badge-mistake').textContent = b.dashboard.mistake.due_today;
