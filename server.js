@@ -12,8 +12,10 @@ const crypto = require('crypto');
 const telemetry = require('./lib/telemetry');
 const api = require('./lib/api');
 
-const PORT = Number(process.env.PORT || 5173);
+let PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || '127.0.0.1';
+const MAX_PORT_RETRY = 8;
+let portRetry = 0;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY = 1024 * 1024; // 1 MB
 
@@ -143,7 +145,20 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
+// 端口被占用时自动顺延，避免个人电脑上和别的开发服务撞车
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE' && portRetry < MAX_PORT_RETRY) {
+    portRetry++;
+    PORT += 1;
+    console.log('  端口被占用，尝试 ' + PORT + ' …');
+    setTimeout(() => server.listen(PORT, HOST), 60);
+  } else {
+    console.error('  无法监听端口，请用 PORT=xxxx node server.js 指定空闲端口');
+    process.exit(1);
+  }
+});
+
+server.on('listening', () => {
   console.log('');
   console.log('  校园事务台 CampusDesk 已启动');
   console.log('  → http://localhost:' + PORT);
@@ -151,5 +166,7 @@ server.listen(PORT, HOST, () => {
   console.log('  按 Ctrl+C 停止（每日同步请运行 node scripts/daily-report.js）');
   console.log('');
 });
+
+server.listen(PORT, HOST);
 
 module.exports = server;
