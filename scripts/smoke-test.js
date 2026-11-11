@@ -45,7 +45,7 @@ async function main() {
   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, stdio: 'ignore',
-    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR, APP_VERSION: 'v1.0.0' },
+    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR },
   });
 
   try {
