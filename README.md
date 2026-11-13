@@ -79,7 +79,7 @@ git push                      # 需要提交到 GitHub 时再执行
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v4.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v4.0.1","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
 ```
 
 - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
@@ -138,6 +138,17 @@ git push                      # 需要提交到 GitHub 时再执行
 
 **复测**：`node scripts/smoke-test.js` **50/50 通过**；三个页面共 135 个 DOM id 引用全部核对存在；未登录访问 `/index.html`、`/admin.html` 及其大小写变体均 302 到登录页，学生访问后台 302 到工作台。
 
+### v4.0.1 · 依据真实运行现象修复多实例缓存一致性
+
+**现场证据**：本机同时存在 5174 与 5175 两个服务进程；账号在 5175 创建并写入 `data/users.json`（2026-11-12 08:50，2 个账号），但 5174 进程从 11-11 启动后内存缓存未刷新，`/api/health` 一直返回 `initialized: false`，页面再次出现「创建管理员账号」。若在该页提交，旧进程的空数组会**覆盖已有账号文件**。
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | `store` 缓存改为带文件指纹（mtime + size + ino），读取时自动失效重读；`update` 写入前复核指纹，被其它进程改动则重读重试 | `lib/store.js` |
+| 2 | 新增本机账号查看 / 密码重置命令行工具（无网页后门，权限依据是能读写 `data/`） | `scripts/reset-password.js` |
+| 3 | 使用说明新增「在哪里查账号 / 密码为何查不到 / 忘记密码怎么办 / 重复出现初始化页怎么办」 | `docs/使用说明.md` |
+| 4 | 停止重复实例，只保留一个服务；版本号升到 `v4.0.1` | `lib/telemetry.js`、`scripts/smoke-test.js` |
+
 ---
 
 ## 隐私与数据
@@ -148,7 +159,7 @@ git push                      # 需要提交到 GitHub 时再执行
 | `process_logs/*.jsonl` | 脱敏运行日志 | 是，作业要求 |
 | `process_logs/summary-*.md` | 每日自动汇总 | 是 |
 
-账号密码以哈希保存在本机 `data/users.json`，会话只存 token 哈希。业务数据只留在本机；填写借用人时建议用昵称或学号后四位，不要填真实姓名全名。
+账号密码以 **scrypt 加盐哈希** 保存在本机 `data/users.json`，会话只存 token 哈希；**密码不可逆，任何页面、日志和文件都查不到明文**。查看账号去后台「账号管理」，或本机执行 `node scripts/reset-password.js`；忘记密码只能重置，详见 `docs/使用说明.md` 第七节。业务数据只留在本机；填写借用人时建议用昵称或学号后四位，不要填真实姓名全名。
 
 ---
 
@@ -168,6 +179,7 @@ public/style.css         统一设计系统（8px 栅格 / 设计令牌）
 public/{login,app,admin}.js
 scripts/smoke-test.js    50 项冒烟测试（隔离数据目录）
 scripts/daily-report.js  每日日志汇总 + 一键 git 同步
+scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
 data/                    业务数据，全部由使用者录入
 process_logs/            每日 telemetry + 日报
 docs/使用说明.md         首次使用与日常操作步骤
@@ -181,6 +193,8 @@ docs/用户反馈表.md        8 份真实反馈空白模板
 | 启动网站 | `node server.js` |
 | 指定端口 | `PORT=8080 node server.js` |
 | 跑接口测试 | `node scripts/smoke-test.js` |
+| 列出已注册账号 | `node scripts/reset-password.js` |
+| 重置某账号密码 | `node scripts/reset-password.js --reset 账号` |
 | 生成今日日报 | `node scripts/daily-report.js` |
 | 生成日报并提交 | `node scripts/daily-report.js --sync` |
 | 查看迭代 diff | `git log --stat`、`git diff HEAD~2 HEAD` |

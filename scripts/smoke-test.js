@@ -249,7 +249,7 @@ async function main() {
     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
     check('按天读取日志', day.data.rows.length > 0);
     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v4.0.0');
+    const v4rows = day.data.rows.filter((r) => r.app_version === 'v4.0.1');
     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
     const overview = await admin.req('GET', '/api/admin/overview');
