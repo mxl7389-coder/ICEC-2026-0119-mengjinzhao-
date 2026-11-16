@@ -40,7 +40,7 @@ async function api(path, opts = {}) {
   });
   let data = {};
   try { data = await res.json(); } catch (_) {}
-  if (res.status === 401) { window.location.href = '/login.html'; throw new Error('登录已失效'); }
+  if (res.status === 401) { window.location.href = '/user/login.html'; throw new Error('登录已失效'); }
   if (!res.ok) throw new Error(data.message || data.error || '请求失败 (' + res.status + ')');
   return data;
 }
@@ -340,7 +340,7 @@ function bindEvents() {
   });
   $('#btn-logout').addEventListener('click', guard(async () => {
     await api('auth/logout', { method: 'POST', body: {} });
-    window.location.href = '/login.html';
+    window.location.href = '/user/login.html';
   }));
   $('#btn-pass').addEventListener('click', () => {
     $('#user-menu').classList.remove('open');
@@ -468,10 +468,6 @@ function applyRole() {
     const roles = (el.dataset.roles || '').split(',').filter(Boolean);
     el.classList.toggle('hidden', !roles.includes(u.role));
   });
-  if (u.role === 'admin') {
-    $('#nav-admin').classList.remove('hidden');
-    $('#link-admin').classList.remove('hidden');
-  }
   $('#zero-banner').classList.toggle('hidden', !S.empty);
 }
 

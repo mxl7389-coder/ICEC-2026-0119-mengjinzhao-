@@ -25,11 +25,12 @@ function makeSession() {
   let cookie = '';
   return {
     get cookie() { return cookie; },
-    async req(method, urlPath, body) {
+    async req(method, urlPath, body, opts) {
       const headers = { 'Content-Type': 'application/json' };
       if (cookie) headers.Cookie = cookie;
       const res = await fetch(BASE + urlPath, {
         method, headers,
+        redirect: (opts && opts.redirect) || 'follow',
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const sc = res.headers.get('set-cookie');
@@ -39,7 +40,7 @@ function makeSession() {
       }
       const ct = res.headers.get('content-type') || '';
       const data = ct.includes('json') ? await res.json() : await res.text();
-      return { status: res.status, data };
+      return { status: res.status, data, location: res.headers.get('location') };
     },
   };
 }
@@ -97,7 +98,7 @@ function streamReader(res) {
 }
 
 async function main() {
-  console.log('\n== CampusDesk 冒烟测试（v4 · 登录 + 前后端拆分 + 实时日志）==\n');
+  console.log('\n== CampusDesk 冒烟测试（v5 · 三套独立入口 + 角色隔离 + 实时日志）==\n');
   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, stdio: 'ignore',
@@ -121,8 +122,14 @@ async function main() {
     const unauth = await anon.req('GET', '/api/bootstrap');
     check('未登录访问业务接口被拦截', unauth.status === 401 && unauth.data.error === 'UNAUTHORIZED');
 
+    const setupWrongPortal = await anon.req('POST', '/api/auth/setup', {
+      username: 'hacker_portal', password: 'Hack2026x', display_name: 'x', portal: 'user',
+    });
+    check('首次初始化不能从用户端完成',
+      setupWrongPortal.status === 403 && setupWrongPortal.data.error === 'PORTAL_MISMATCH');
+
     const setup = await admin.req('POST', '/api/auth/setup', {
-      username: 'smoke_admin', password: 'Admin2026x', display_name: '测试管理员',
+      username: 'smoke_admin', password: 'Admin2026x', display_name: '测试管理员', portal: 'admin',
     });
     check('首次初始化由使用者创建管理员', setup.status === 201 && setup.data.user.role === 'admin');
     const again = await anon.req('POST', '/api/auth/setup', {
@@ -222,6 +229,55 @@ async function main() {
     check('学生不能查看他人反馈汇总', fbList.status === 403);
     check('未知路由返回 404', (await admin.req('GET', '/api/not-exist')).status === 404);
 
+    /* ---------- 三套独立入口、页面级越权与旧链接兼容 ---------- */
+    const manual = { redirect: 'manual' };
+    const coverPage = await anon.req('GET', '/', undefined, manual);
+    check('动态封面总入口可匿名访问',
+      coverPage.status === 200 && String(coverPage.data).includes('把校园里的琐事'));
+    const userLoginPage = await anon.req('GET', '/user/', undefined, manual);
+    check('用户端独立登录页可访问',
+      userLoginPage.status === 200 && String(userLoginPage.data).includes('案头有常课'));
+    const adminLoginPage = await anon.req('GET', '/admin/', undefined, manual);
+    check('管理端独立登录页可访问',
+      adminLoginPage.status === 200 && String(adminLoginPage.data).includes('运行皆有迹'));
+    check('两端登录页互不出现对方入口',
+      !String(userLoginPage.data).includes('/admin/') && !String(adminLoginPage.data).includes('/user/'));
+    const portalCss = await anon.req('GET', '/portal.css', undefined, manual);
+    check('书院风封面样式资源可访问',
+      portalCss.status === 200 && String(portalCss.data).includes('@keyframes leafFall'));
+    const portalJs = await anon.req('GET', '/portal.js', undefined, manual);
+    check('入口脚本资源可访问', portalJs.status === 200);
+
+    const uIdxAnon = await anon.req('GET', '/user/index.html', undefined, manual);
+    check('未登录访问用户工作台→本端登录页',
+      uIdxAnon.status === 302 && uIdxAnon.location === '/user/login.html');
+    const aIdxAnon = await anon.req('GET', '/admin/index.html', undefined, manual);
+    check('未登录访问管理后台→本端登录页',
+      aIdxAnon.status === 302 && aIdxAnon.location === '/admin/login.html');
+    const upper = await anon.req('GET', '/ADMIN/INDEX.HTML', undefined, manual);
+    check('大小写变体不能绕过页面鉴权',
+      upper.status === 302 && upper.location === '/admin/login.html');
+    const aIdxStu = await student.req('GET', '/admin/index.html', undefined, manual);
+    check('学生不能进入管理端页面',
+      aIdxStu.status === 302 && aIdxStu.location === '/admin/login.html');
+    const uIdxAdmin = await admin.req('GET', '/user/index.html', undefined, manual);
+    check('管理员不能进入用户端页面',
+      uIdxAdmin.status === 302 && uIdxAdmin.location === '/user/login.html');
+    const uLoginByStu = await student.req('GET', '/user/', undefined, manual);
+    check('已登录用户端跳过登录页直达工作台',
+      uLoginByStu.status === 302 && uLoginByStu.location === '/user/index.html');
+    const aLoginByAdmin = await admin.req('GET', '/admin/', undefined, manual);
+    check('已登录管理端跳过登录页直达后台',
+      aLoginByAdmin.status === 302 && aLoginByAdmin.location === '/admin/index.html');
+
+    for (const [oldPath, target] of [
+      ['/login.html', '/'], ['/index.html', '/user/'], ['/admin.html', '/admin/'],
+      ['/app.js', '/user/app.js'], ['/admin.js', '/admin/admin.js'],
+    ]) {
+      const r = await anon.req('GET', oldPath, undefined, manual);
+      check('旧链接兼容 ' + oldPath, r.status === 302 && r.location === target);
+    }
+
     /* ---------- 管理员后台：实时日志 ---------- */
     const ctrl = new AbortController();
     const sseRes = await fetch(BASE + '/api/admin/stream', {
@@ -249,7 +305,7 @@ async function main() {
     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
     check('按天读取日志', day.data.rows.length > 0);
     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v4.0.1');
+    const v4rows = day.data.rows.filter((r) => r.app_version === 'v5.0.0');
     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
     const overview = await admin.req('GET', '/api/admin/overview');
@@ -265,6 +321,27 @@ async function main() {
     const out = await student.req('POST', '/api/auth/logout', {});
     check('退出登录清除会话', out.status === 200 && student.cookie === '');
     check('退出后接口不可访问', (await student.req('GET', '/api/dashboard')).status === 401);
+
+    /* ---------- 入口角色约束：服务端二次校验 ---------- */
+    const probe = makeSession();
+    const adminAtUser = await probe.req('POST', '/api/auth/login', {
+      username: 'smoke_admin', password: 'Admin2026x', portal: 'user',
+    });
+    check('管理员账号不能从用户端登录',
+      adminAtUser.status === 403 && adminAtUser.data.error === 'PORTAL_MISMATCH');
+    const studentAtAdmin = await probe.req('POST', '/api/auth/login', {
+      username: 'smoke_student', password: 'Campus2026x', portal: 'admin',
+    });
+    check('学生账号不能从管理端登录',
+      studentAtAdmin.status === 403 && studentAtAdmin.data.error === 'PORTAL_MISMATCH');
+    const studentAtUser = await probe.req('POST', '/api/auth/login', {
+      username: 'smoke_student', password: 'Campus2026x', portal: 'user',
+    });
+    check('用户端入口可正常登录', studentAtUser.status === 200);
+    const adminAtAdmin = await probe.req('POST', '/api/auth/login', {
+      username: 'smoke_admin', password: 'Admin2026x', portal: 'admin',
+    });
+    check('管理端入口可正常登录', adminAtAdmin.status === 200);
 
     sse.cancel(); ctrl.abort();
     const pass = results.filter((r) => r.ok).length;

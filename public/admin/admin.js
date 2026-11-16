@@ -29,8 +29,8 @@ async function api(path, opts = {}) {
   });
   let data = {};
   try { data = await res.json(); } catch (_) {}
-  if (res.status === 401) { window.location.href = '/login.html'; throw new Error('登录已失效'); }
-  if (res.status === 403) { window.location.href = '/index.html'; throw new Error('需要管理员权限'); }
+  if (res.status === 401) { window.location.href = '/admin/login.html'; throw new Error('登录已失效'); }
+  if (res.status === 403) { window.location.href = '/admin/login.html'; throw new Error('需要管理员权限'); }
   if (!res.ok) throw new Error(data.message || data.error || '请求失败 (' + res.status + ')');
   return data;
 }
@@ -89,7 +89,7 @@ function renderRows() {
   }).slice(0, 300);
   $('#log-rows').innerHTML = rows.length
     ? rows.map((r, i) => rowHtml(r, i === 0 && S.live)).join('')
-    : '<div class="admin-empty">当前筛选条件下暂无日志记录。打开工作台或执行任意操作，新记录会即时出现在这里。</div>';
+    : '<div class="admin-empty">当前筛选条件下暂无日志记录。任意一次页面访问或接口调用，新记录都会即时出现在这里。</div>';
   $('#row-count').textContent = rows.length;
 }
 function fillModuleFilter() {
@@ -317,7 +317,7 @@ function bindEvents() {
   });
   $('#btn-logout').addEventListener('click', guard(async () => {
     await api('auth/logout', { method: 'POST', body: {} });
-    window.location.href = '/login.html';
+    window.location.href = '/admin/login.html';
   }));
 
   ['#filter-module', '#filter-status'].forEach((s) =>
@@ -366,7 +366,7 @@ function bindEvents() {
 (async function init() {
   try {
     const me = await api('auth/me');
-    if (me.user.role !== 'admin') { window.location.href = '/index.html'; return; }
+    if (me.user.role !== 'admin') { window.location.href = '/admin/login.html'; return; }
     S.user = me.user;
     $('#user-name').textContent = me.user.display_name || me.user.username;
     $('#user-avatar').textContent = (me.user.display_name || me.user.username).slice(0, 1);

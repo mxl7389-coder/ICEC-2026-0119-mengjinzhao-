@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>校园事务台 · CampusDesk</title>
+<meta name="description" content="校园事务台总入口：学生 / 教师工作台与管理员实时日志后台，两套独立入口。">
+<link rel="stylesheet" href="/portal.css">
+</head>
+<body class="portal-page" data-portal="cover">
+<div class="cover">
+
+  <!-- ============ 背景：宣纸 · 晨光 · 远山 · 飞鸟 · 银杏 ============ -->
+  <div class="sky-glow" aria-hidden="true"></div>
+  <svg class="paper-grain" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+    <rect width="100%" height="100%" filter="url(#grain)"/>
+  </svg>
+  <div class="window-grid" aria-hidden="true"></div>
+
+  <svg class="mountains" viewBox="0 0 1440 420" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="mt-far" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a9a92" stop-opacity=".30"/><stop offset="1" stop-color="#8a9a92" stop-opacity="0"/></linearGradient>
+      <linearGradient id="mt-mid" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5d7368" stop-opacity=".34"/><stop offset="1" stop-color="#5d7368" stop-opacity="0"/></linearGradient>
+      <linearGradient id="mt-near" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#33483f" stop-opacity=".30"/><stop offset="1" stop-color="#33483f" stop-opacity="0"/></linearGradient>
+    </defs>
+    <path class="mt mt-1" fill="url(#mt-far)" d="M0 258 C110 214 210 246 330 196 C450 146 548 224 690 178 C826 134 940 226 1078 184 C1216 142 1330 214 1440 176 L1440 420 L0 420 Z"/>
+    <path class="mt mt-2" fill="url(#mt-mid)" d="M0 312 C126 276 232 306 356 264 C482 222 596 296 726 258 C858 220 966 300 1104 266 C1232 234 1344 288 1440 258 L1440 420 L0 420 Z"/>
+    <path class="mt mt-3" fill="url(#mt-near)" d="M0 366 C140 340 250 372 390 340 C528 308 650 364 790 340 C930 316 1050 368 1186 344 C1310 322 1390 352 1440 338 L1440 420 L0 420 Z"/>
+  </svg>
+
+  <svg class="birds" viewBox="0 0 260 60" aria-hidden="true">
+    <g fill="none" stroke="#40564c" stroke-width="1.6" stroke-linecap="round" opacity=".55">
+      <path class="bird bird-1" d="M6 22 q7 -8 14 0 q7 -8 14 0"/>
+      <path class="bird bird-2" d="M58 12 q5 -6 10 0 q5 -6 10 0"/>
+      <path class="bird bird-3" d="M96 30 q6 -7 12 0 q6 -7 12 0"/>
+    </g>
+  </svg>
+
+  <div class="ginkgo" aria-hidden="true">
+    <svg class="leaf leaf-1" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-2" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-3" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-4" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-5" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-6" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-7" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+    <svg class="leaf leaf-8" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41" /><path class="vein" d="M20 31 L11 25 M20 31 L29 25 M20 31 L20 12"/></svg>
+  </div>
+
+  <!-- 竖排题字与朱红印章 -->
+  <div class="vertical-poem" aria-hidden="true">
+    <span style="--i:0">书</span><span style="--i:1">香</span><span style="--i:2">校</span><span style="--i:3">园</span>
+    <i class="poem-gap"></i>
+    <span style="--i:4">事</span><span style="--i:5">务</span><span style="--i:6">有</span><span style="--i:7">序</span>
+  </div>
+  <div class="seal" aria-hidden="true"><span>校<br>务</span></div>
+
+  <!-- ============ 内容 ============ -->
+  <div class="cover-inner">
+    <header class="cover-head">
+      <div class="brand"><span class="brand-seal">校</span><span class="brand-text">CampusDesk <i>·</i> 校园事务台</span></div>
+      <div class="cover-time" id="cover-time">—</div>
+    </header>
+
+    <main class="cover-main">
+      <div class="cover-kicker"><span class="kicker-line"></span>项目四 · 轻量化实用程序研发与日常运行日志验证</div>
+      <h1 class="cover-title">把校园里的琐事<br><em>收进一页书香</em></h1>
+      <p class="cover-lead">通知自动拆成待办，器材借还自动核对，错题按遗忘曲线排队复习。<br>学生、教师与管理员各循其道，运行痕迹实时可查。</p>
+      <div class="cover-motto">案头有常课　心中有定数</div>
+
+      <div class="portal-grid">
+        <a class="portal-card card-user" href="/user/" id="card-user">
+          <div class="card-icon">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12c6-3 12-3 16 1 4-4 10-4 16-1v26c-6-3-12-3-16 1-4-4-10-4-16-1V12Z"/><path d="M24 13v27M11 19h7M11 25h7M30 19h7M30 25h7"/></svg>
+          </div>
+          <div class="card-body">
+            <div class="card-eyebrow">PORTAL 01 <i>/</i> 用户端</div>
+            <h2>学生 · 教师</h2>
+            <p>通知提取 / 器材借还 / 错题归档 / 使用反馈</p>
+            <span class="card-state" id="state-user">尚未登录</span>
+          </div>
+          <div class="card-go"><span>进入工作台</span><i>→</i></div>
+        </a>
+
+        <a class="portal-card card-admin" href="/admin/" id="card-admin">
+          <div class="card-icon">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="32" height="32" rx="3"/><path d="M16 16h16v16H16zM16 22h16M22 16v16M16 27h16"/></svg>
+          </div>
+          <div class="card-body">
+            <div class="card-eyebrow">PORTAL 02 <i>/</i> 管理端</div>
+            <h2>管理员</h2>
+            <p>实时运行日志 / 错误码聚合 / 账号管理 / 数据总览</p>
+            <span class="card-state" id="state-admin">尚未登录</span>
+          </div>
+          <div class="card-go"><span>进入管理后台</span><i>→</i></div>
+        </a>
+      </div>
+
+      <div class="cover-hint" id="cover-hint">系统不预置任何账号与业务数据，一切内容由使用者录入。</div>
+    </main>
+
+    <footer class="cover-foot">
+      <span id="cover-date">—</span><span class="foot-rule"></span>
+      <span>本地运行 · 零第三方依赖 · 数据只留在本机</span>
+    </footer>
+  </div>
+</div>
+<script src="/portal.js"></script>
+</body>
+</html>

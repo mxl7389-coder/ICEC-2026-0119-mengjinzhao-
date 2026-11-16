@@ -474,3 +474,47 @@ h1, h2, h3, h4 { letter-spacing: .1px; }
   .log-line { grid-template-columns: 66px 72px 70px 56px 1fr; }
   .log-line .log-role, .log-line .log-err { display: none; }
 }
+
+/* ==========================================================================
+   v5 · 书院气质增强
+   纯装饰层：不改变既有组件结构与交互，与入口封面保持同一套视觉语言
+   ========================================================================== */
+.topbar { background: linear-gradient(180deg, rgba(255, 255, 255, .97), rgba(250, 248, 241, .94)); }
+.topbar::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, rgba(176, 141, 87, .65), rgba(176, 141, 87, .12) 42%, transparent 72%);
+  pointer-events: none;
+}
+.main { background-image: radial-gradient(ellipse 60% 30% at 100% 0%, rgba(176, 141, 87, .05), transparent 70%); }
+.card { transition: box-shadow .28s ease, border-color .28s ease; }
+.card:hover { box-shadow: 0 2px 4px rgba(19, 42, 80, .05), 0 14px 32px rgba(19, 42, 80, .075); }
+.card-head h3::before {
+  content: ''; display: inline-block; width: 3px; height: 14px;
+  background: rgba(168, 53, 42, .7); border-radius: 2px;
+  margin-right: 9px; vertical-align: -1px;
+}
+.side-foot::before {
+  content: '案头有常课　心中有定数';
+  display: block; font-family: "STKaiti", "KaiTi", "楷体", serif;
+  font-size: 12px; letter-spacing: .16em; color: var(--muted);
+  padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px dashed var(--line);
+  opacity: .82;
+}
+.admin-shell .side-foot::before { color: #7f97ba; border-bottom-color: #1d3050; }
+.admin-shell .sidebar {
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .018) 0 1px, transparent 1px 28px),
+    linear-gradient(180deg, #101f36, #0e1b2e);
+}
+.hero { background: linear-gradient(112deg, #16324f 0%, #245b7a 52%, #3f6b5a 100%); }
+.hero::before {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 46%;
+  background: radial-gradient(ellipse 70% 100% at 18% 100%, rgba(255, 255, 255, .10), transparent 70%);
+  pointer-events: none;
+}
+@media (max-width: 760px) {
+  .card-head h3::before { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card { transition: none; }
+}

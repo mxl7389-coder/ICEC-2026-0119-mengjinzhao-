@@ -3,10 +3,10 @@
  * 校园事务台 · CampusDesk
  * 零依赖本地服务：node server.js  →  http://localhost:5173（占用时自动顺延）
  *
- * 三个入口：
- *   /login.html   登录 / 首次初始化（由使用者自己创建第一位管理员）
- *   /index.html   学生 / 教师工作台
- *   /admin.html   管理员后台（SSE 实时运行日志）
+ * 三套完全独立的入口（用户端与管理端登录后互不跳转、UI 上互不可见）：
+ *   /            中国书院 × 校园文化动态封面（总入口，两个独立入口卡片）
+ *   /user/       用户端：独立登录页 + 学生 / 教师工作台（只接受 student / teacher）
+ *   /admin/      管理端：独立登录页 + 首次初始化 + 实时日志后台（只接受 admin）
  *
  * 每个 /api 请求结束时由 telemetry 自动写一条脱敏日志（调用频次 / 耗时 / 报错 / 角色）。
  */
@@ -54,20 +54,68 @@ function redirect(res, location) {
   res.end();
 }
 
-function serveStatic(req, res, pathname, filename, user) {
-  const rel = filename || (pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, ''));
+/* --------------------------- 三套独立页面入口 --------------------------- */
+// 旧链接一律 302 到新入口，避免两套 URL 并存造成混乱
+const LEGACY_REDIRECT = {
+  '/login.html': '/',
+  '/index.html': '/user/',
+  '/admin.html': '/admin/',
+  '/app.js': '/user/app.js',
+  '/admin.js': '/admin/admin.js',
+  '/login.js': '/portal.js',
+};
+
+// 只有白名单里的静态资源可直接读取；HTML 必须经 resolvePage 鉴权，杜绝路径/大小写绕过
+const STATIC_FILES = {
+  '/style.css': 'style.css',
+  '/portal.css': 'portal.css',
+  '/portal.js': 'portal.js',
+  '/user/app.js': 'user/app.js',
+  '/admin/admin.js': 'admin/admin.js',
+};
+
+/**
+ * 按规范化（小写、去尾斜杠）后的路径解析页面。
+ * 返回 { file } / { redirect } / null（交给静态资源白名单）。
+ */
+function resolvePage(pathname, user) {
+  const raw = pathname.toLowerCase();
+  const key = raw.length > 1 ? raw.replace(/\/+$/, '') : raw;
+
+  if (LEGACY_REDIRECT[key]) return { redirect: LEGACY_REDIRECT[key] };
+
+  // 封面总入口：始终可见，不按登录状态强制跳转
+  if (key === '/' || key === '/cover.html') return { file: 'cover.html' };
+
+  // 用户端：已登录的 student / teacher 直接进工作台；管理员账号不在这里放行
+  if (key === '/user' || key === '/user/login.html') {
+    if (user && user.role !== 'admin') return { redirect: '/user/index.html' };
+    return { file: 'user/login.html' };
+  }
+  if (key === '/user/index.html') {
+    if (!user || user.role === 'admin') return { redirect: '/user/login.html' };
+    return { file: 'user/index.html' };
+  }
+
+  // 管理端：只有 admin 会话可进后台
+  if (key === '/admin' || key === '/admin/login.html') {
+    if (user && user.role === 'admin') return { redirect: '/admin/index.html' };
+    return { file: 'admin/login.html' };
+  }
+  if (key === '/admin/index.html') {
+    if (!user || user.role !== 'admin') return { redirect: '/admin/login.html' };
+    return { file: 'admin/index.html' };
+  }
+  return null;
+}
+
+function serveStatic(res, rel) {
   const file = path.resolve(PUBLIC_DIR, rel);
   if (!file.startsWith(path.resolve(PUBLIC_DIR) + path.sep)) {
     return send(res, 403, { error: 'forbidden' });
   }
-  // 按解析后的真实文件名做鉴权，避免大小写或编码变体绕过页面级检查
-  const base = path.basename(file).toLowerCase();
-  if (base === 'index.html' || base === 'admin.html') {
-    if (!user) return redirect(res, '/login.html');
-    if (base === 'admin.html' && user.role !== 'admin') return redirect(res, '/index.html');
-  }
   fs.readFile(file, (err, buf) => {
-    if (err) return send(res, 404, { error: 'not_found', path: pathname });
+    if (err) return send(res, 404, { error: 'not_found' });
     send(res, 200, buf, {
       'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     });
@@ -162,7 +210,8 @@ const server = http.createServer(async (req, res) => {
   const finish = () => {
     const duration = Number(process.hrtime.bigint() - started) / 1e6;
     // 页面加载也计入「使用频次」，但只记路径，不记任何用户内容
-    const isPage = pathname === '/' || /^\/[a-z-]+\.html$/.test(pathname);
+    const isPage = !pathname.startsWith('/api/') &&
+      (pathname.endsWith('.html') || pathname === '/' || /^\/(user|admin)\/$/.test(pathname));
     if (pathname.startsWith('/api/') || isPage) {
       const parts = pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
       telemetry.log({
@@ -181,11 +230,14 @@ const server = http.createServer(async (req, res) => {
     /* ---------- 静态页面与访问控制 ---------- */
     if (!pathname.startsWith('/api/')) {
       res.on('finish', finish);
-      if (pathname === '/') {
-        if (!user) return serveStatic(req, res, pathname, 'login.html', user);
-        return redirect(res, user.role === 'admin' ? '/admin.html' : '/index.html');
+      const route = resolvePage(pathname, user);
+      if (route) {
+        if (route.redirect) return redirect(res, route.redirect);
+        return serveStatic(res, route.file);
       }
-      return serveStatic(req, res, pathname, null, user);
+      const asset = STATIC_FILES[pathname.toLowerCase()];
+      if (asset) return serveStatic(res, asset);
+      return send(res, 404, { error: 'not_found', path: pathname });
     }
 
     /* ---------- SSE：长连接不走普通 finish 日志 ---------- */
@@ -236,8 +288,9 @@ server.on('error', (err) => {
 server.on('listening', () => {
   console.log('');
   console.log('  校园事务台 CampusDesk 已启动');
-  console.log('  → http://localhost:' + PORT + '/login.html');
-  console.log('  学生/教师工作台 → /index.html    管理员后台 → /admin.html');
+  console.log('  封面总入口 → http://localhost:' + PORT + '/');
+  console.log('  用户端 /user/  （独立登录 + 学生/教师工作台）');
+  console.log('  管理端 /admin/ （独立登录 + 实时日志后台）');
   console.log('  日志目录 → ' + telemetry.LOG_DIR);
   console.log('  按 Ctrl+C 停止（每日同步请运行 node scripts/daily-report.js --sync）');
   console.log('');

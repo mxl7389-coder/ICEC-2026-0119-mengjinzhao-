@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理端登录 · 校园事务台</title>
+<link rel="stylesheet" href="/portal.css">
+</head>
+<body class="portal-page" data-portal="admin">
+<div class="login-page">
+
+  <section class="login-visual">
+    <div class="sky-glow" aria-hidden="true"></div>
+    <svg class="paper-grain" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+      <rect width="100%" height="100%" filter="url(#grain)"/>
+    </svg>
+    <div class="window-grid" aria-hidden="true"></div>
+    <svg class="mountains" viewBox="0 0 1440 420" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="mt-a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6e96b4" stop-opacity=".30"/><stop offset="1" stop-color="#6e96b4" stop-opacity="0"/></linearGradient>
+        <linearGradient id="mt-b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2c5573" stop-opacity=".34"/><stop offset="1" stop-color="#2c5573" stop-opacity="0"/></linearGradient>
+      </defs>
+      <path class="mt mt-1" fill="url(#mt-a)" d="M0 258 C110 214 210 246 330 196 C450 146 548 224 690 178 C826 134 940 226 1078 184 C1216 142 1330 214 1440 176 L1440 420 L0 420 Z"/>
+      <path class="mt mt-2" fill="url(#mt-b)" d="M0 322 C126 286 232 316 356 274 C482 232 596 306 726 268 C858 230 966 310 1104 276 C1232 244 1344 298 1440 268 L1440 420 L0 420 Z"/>
+    </svg>
+    <div class="logflow" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="ginkgo" aria-hidden="true">
+      <svg class="leaf leaf-2" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+      <svg class="leaf leaf-4" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+      <svg class="leaf leaf-6" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+    </div>
+    <div class="vertical-poem" aria-hidden="true"><span style="--i:0">运</span><span style="--i:1">行</span><span style="--i:2">有</span><span style="--i:3">迹</span></div>
+    <div class="seal" aria-hidden="true"><span>稽<br>核</span></div>
+
+    <div class="login-visual-inner">
+      <div class="brand"><span class="brand-seal">校</span><span class="brand-text">CampusDesk <i>·</i> 校园事务台</span></div>
+      <div class="login-eyebrow" style="margin-top:48px">PORTAL 02 / 管理端</div>
+      <h1>运行皆有迹<br><em>数据可稽核</em></h1>
+      <p>服务端每次调用自动写入脱敏日志，通过 SSE 实时推送。这里是管理员专属入口，与用户端完全独立。</p>
+    </div>
+    <div class="login-visual-foot">
+      <span class="motto">实时日志　账号管理</span>
+      仅记录时间 / 角色 / 模块 / 状态 / 耗时 / 错误码，不含任何原文
+    </div>
+  </section>
+
+  <section class="login-panel">
+    <div class="login-card">
+      <div class="eyebrow">Admin Console · 管理端</div>
+      <h2 id="form-title">登录管理后台</h2>
+      <p class="sub" id="form-sub">此入口仅接受管理员账号。学生与教师请使用各自的用户端入口。</p>
+      <div id="portal-alert" class="portal-alert hidden"></div>
+
+      <!-- 首次使用：由使用者本人创建第一位管理员，只在管理端出现 -->
+      <div id="setup-block" class="hidden">
+        <form id="form-setup" class="login-form">
+          <label>显示名称<input id="su-name" autocomplete="name" placeholder="如：张老师 / 实验室管理员" maxlength="20" required></label>
+          <label>管理员账号<input id="su-user" autocomplete="username" placeholder="3–24 位，中文 / 字母 / 数字" maxlength="24" required></label>
+          <label>密码<input id="su-pass" type="password" autocomplete="new-password" placeholder="至少 8 位，含字母与数字" required></label>
+          <label>确认密码<input id="su-pass2" type="password" autocomplete="new-password" placeholder="再输入一次" required></label>
+          <button class="btn-enter" type="submit">创建并进入管理后台</button>
+        </form>
+        <div class="step-list">
+          <div class="step"><i>1</i><span>此步骤只出现一次，由你本人设置首位管理员。</span></div>
+          <div class="step"><i>2</i><span>创建后在「账号管理」里建立学生 / 教师账号并线下告知。</span></div>
+          <div class="step"><i>3</i><span>使用者从用户端入口登录，自行录入全部业务数据。</span></div>
+        </div>
+      </div>
+
+      <div id="login-block" class="hidden">
+        <form id="form-login" class="login-form">
+          <label>账号<input id="lg-user" autocomplete="username" placeholder="请输入管理员账号" maxlength="24" required></label>
+          <label>密码<input id="lg-pass" type="password" autocomplete="current-password" placeholder="请输入密码" required></label>
+          <button class="btn-enter" type="submit">进入管理后台</button>
+        </form>
+      </div>
+
+      <div class="login-note">
+        系统不预置任何账号与业务数据。密码以 scrypt 加盐哈希保存，任何页面与日志都不会出现明文。<br>
+        若忘记唯一管理员密码，可在本机运行 <code>node scripts/reset-password.js --reset 账号</code> 重置。
+      </div>
+    </div>
+  </section>
+</div>
+<script src="/portal.js"></script>
+</body>
+</html>

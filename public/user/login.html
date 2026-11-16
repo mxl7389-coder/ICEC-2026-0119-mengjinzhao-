@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>用户端登录 · 校园事务台</title>
+<link rel="stylesheet" href="/portal.css">
+</head>
+<body class="portal-page" data-portal="user">
+<div class="login-page">
+
+  <section class="login-visual">
+    <div class="sky-glow" aria-hidden="true"></div>
+    <svg class="paper-grain" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+      <rect width="100%" height="100%" filter="url(#grain)"/>
+    </svg>
+    <div class="window-grid" aria-hidden="true"></div>
+    <svg class="mountains" viewBox="0 0 1440 420" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="mt-a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a9a92" stop-opacity=".32"/><stop offset="1" stop-color="#8a9a92" stop-opacity="0"/></linearGradient>
+        <linearGradient id="mt-b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f6b5a" stop-opacity=".28"/><stop offset="1" stop-color="#3f6b5a" stop-opacity="0"/></linearGradient>
+      </defs>
+      <path class="mt mt-1" fill="url(#mt-a)" d="M0 258 C110 214 210 246 330 196 C450 146 548 224 690 178 C826 134 940 226 1078 184 C1216 142 1330 214 1440 176 L1440 420 L0 420 Z"/>
+      <path class="mt mt-2" fill="url(#mt-b)" d="M0 322 C126 286 232 316 356 274 C482 232 596 306 726 268 C858 230 966 310 1104 276 C1232 244 1344 298 1440 268 L1440 420 L0 420 Z"/>
+    </svg>
+    <svg class="birds" viewBox="0 0 260 60" aria-hidden="true"><g fill="none" stroke="#40564c" stroke-width="1.6" stroke-linecap="round" opacity=".55"><path class="bird bird-1" d="M6 22 q7 -8 14 0 q7 -8 14 0"/><path class="bird bird-2" d="M58 12 q5 -6 10 0 q5 -6 10 0"/></g></svg>
+    <div class="ginkgo" aria-hidden="true">
+      <svg class="leaf leaf-1" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+      <svg class="leaf leaf-3" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+      <svg class="leaf leaf-5" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+      <svg class="leaf leaf-7" viewBox="0 0 40 44"><path d="M20 5 C9 9 3 21 7 29 C11 37 17 36 20 32 C23 36 29 37 33 29 C37 21 31 9 20 5 Z M20 32 L20 41"/></svg>
+    </div>
+    <div class="vertical-poem" aria-hidden="true"><span style="--i:0">书</span><span style="--i:1">香</span><span style="--i:2">校</span><span style="--i:3">园</span></div>
+    <div class="seal" aria-hidden="true"><span>校<br>务</span></div>
+
+    <div class="login-visual-inner">
+      <div class="brand"><span class="brand-seal">校</span><span class="brand-text">CampusDesk <i>·</i> 校园事务台</span></div>
+      <div class="login-eyebrow" style="margin-top:48px">PORTAL 01 / 用户端</div>
+      <h1>案头有常课<br><em>心中有定数</em></h1>
+      <p>把班群通知拆成待办，把器材借还核对清楚，把错题排进复习队列。这里是学生与教师的专属入口。</p>
+    </div>
+    <div class="login-visual-foot">
+      <span class="motto">书香校园　事务有序</span>
+      本地运行 · 数据只留在本机 · 所有内容由使用者录入
+    </div>
+  </section>
+
+  <section class="login-panel">
+    <div class="login-card">
+      <div class="eyebrow">User Portal · 用户端</div>
+      <h2>登录工作台</h2>
+      <p class="sub">请使用管理员分配的账号登录。此入口仅接受学生与教师账号。</p>
+      <div id="portal-alert" class="portal-alert hidden"></div>
+
+      <div id="login-block" class="hidden">
+        <form id="form-login" class="login-form">
+          <label>账号<input id="lg-user" autocomplete="username" placeholder="请输入账号" maxlength="24" required></label>
+          <label>密码<input id="lg-pass" type="password" autocomplete="current-password" placeholder="请输入密码" required></label>
+          <button class="btn-enter" type="submit">进入工作台</button>
+        </form>
+      </div>
+
+      <div class="login-note">
+        忘记密码可请管理员在后台重置；登录后可在本端右上角「修改密码」自行更改。<br>
+        密码以 scrypt 加盐哈希保存，明文不会写入任何文件或日志。
+      </div>
+    </div>
+  </section>
+</div>
+<script src="/portal.js"></script>
+</body>
+</html>

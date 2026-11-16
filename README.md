@@ -14,15 +14,19 @@
 
 ---
 
-## v4：前后端分离 + 登录 + 实时日志后台
+## v5：三套独立入口 + 中国书院动态封面
 
-这一版把「一个页面」拆成三个入口，并加入账号体系：
+用户端与管理端是**两套完全独立的入口**，各有自己的登录页、界面配色与导航；登录后互不跳转，界面上也不出现对方入口。服务端对入口再做一次角色校验，跨端登录会被拒绝（`PORTAL_MISMATCH`）。
 
 | 入口 | 使用者 | 内容 |
 | --- | --- | --- |
-| `/login.html` | 所有人 | 登录；**首次打开时由你本人创建第一位管理员** |
-| `/index.html` | 学生 / 教师 | 总览、通知提取、器材借还、错题归档、使用反馈、项目说明 |
-| `/admin.html` | 管理员 | **SSE 实时运行日志**、日志分析、账号管理、数据总览 |
+| `/` | 所有人 | **动态封面**：宣纸纹理、水墨远山、晨光、飘落银杏、朱红印章、竖排题字，两个独立入口卡片 |
+| `/user/` | 学生 / 教师 | 独立登录页 + 总览、通知提取、器材借还、错题归档、使用反馈、项目说明（浅色书院风） |
+| `/admin/` | 管理员 | 独立登录页 + **首次创建管理员** + SSE 实时运行日志、日志分析、账号管理、数据总览（深墨蓝控制台） |
+
+- 封面与两端登录页为纯 CSS + 内联 SVG 动画，无外部图片、字体或 CDN；支持 `prefers-reduced-motion` 与手机端断点。
+- 旧链接 `/login.html` `/index.html` `/admin.html` 会 302 到新入口，不会出现两套 URL 并存。
+- HTML 必须经服务端 `resolvePage()` 鉴权后才下发；静态资源走白名单，大小写变体无法绕过页面级检查。
 
 角色权限（服务端二次校验，仅靠隐藏按钮无法越权）：
 
@@ -38,6 +42,7 @@
 - 登录失败限流：同一 IP 10 分钟内 8 次失败后暂时拒绝；账号不存在时也做一次等价哈希计算，避免时序枚举。
 - 学生只能看到自己录入的通知与错题（记录带 `owner_id`），教师/管理员看全部。
 - **实时日志**：`lib/telemetry.js` 落盘后向订阅者广播，`/api/admin/stream` 以 SSE 推送；断线自动重连，重连期间由 `/api/admin/poll?cursor=N` 按游标补齐，不重不漏。
+- **入口隔离**：登录请求带 `portal=user|admin`；管理员账号不能从用户端登录，学生/教师账号不能从管理端登录，首位管理员只能在管理端创建。校验放在密码验证通过之后，避免未认证请求枚举账号角色（`portal` 可选，脚本与旧调用保持兼容）。
 
 ### ⚠️ 零预置数据
 
@@ -55,15 +60,16 @@
 
 ```bash
 node server.js
-# 浏览器打开 http://localhost:5173/login.html
+# 浏览器打开 http://localhost:5173/
+# 封面 → 用户端 /user/ ｜ 管理端 /admin/
 ```
 
 默认端口 5173；若被本机其它服务占用，会自动顺延到 5174、5175……以终端实际打印的地址为准。也可显式指定：`PORT=8080 node server.js`。
 
-**第一次打开**：页面显示「创建管理员账号」，填好显示名称、账号、密码后自动进入管理后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者登录后自行录入数据。
+**第一次打开**：封面页 → 点「管理员 · 进入管理后台」→ 管理端登录页显示「创建管理员账号」，填好显示名称、账号、密码后自动进入后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者从 `/user/` 登录后自行录入数据。**系统当前账号已按你的要求清空，正处于这个「重新注册」状态。**
 
 ```bash
-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，50 项断言
+node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，73 项断言
 node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
 git push                      # 需要提交到 GitHub 时再执行
 ```
@@ -79,7 +85,7 @@ git push                      # 需要提交到 GitHub 时再执行
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v4.0.1","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v5.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
 ```
 
 - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
@@ -149,6 +155,23 @@ git push                      # 需要提交到 GitHub 时再执行
 | 3 | 使用说明新增「在哪里查账号 / 密码为何查不到 / 忘记密码怎么办 / 重复出现初始化页怎么办」 | `docs/使用说明.md` |
 | 4 | 停止重复实例，只保留一个服务；版本号升到 `v4.0.1` | `lib/telemetry.js`、`scripts/smoke-test.js` |
 
+### v5 · 三套独立入口 + 中国书院 × 校园文化动态封面
+
+**需求驱动**：① 清空已注册账号、重新注册；② 把「管理员」与「用户」彻底分成两套独立系统；③ 界面太简单，按校园文化做动态封面。
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | **清空账号**：备份原有 2 个账号到 `.workbuddy/backups/accounts-before-reset-2026-11-16/`，`users.json` / `sessions.json` 归零，系统回到「由使用者重新创建管理员」状态；业务数据原本全为 0，未改动、未新增 | `data/` |
+| 2 | 目录物理拆分：`public/user/`（独立登录页 + 工作台）与 `public/admin/`（独立登录页 + 后台）；删除共用的旧登录页，前端去掉全部跨端链接与跳转 | `public/user/*`、`public/admin/*` |
+| 3 | `server.js` 重写页面路由：`/` 封面、`/user/`、`/admin/` 三套入口，按目录鉴权；HTML 必须经 `resolvePage()`，静态资源白名单；旧链接 302 兼容 | `server.js` |
+| 4 | 登录请求增加可选 `portal`，服务端校验账号角色与入口匹配；首次初始化只能在管理端完成 | `lib/auth.js` |
+| 5 | 新增动态封面：宣纸纹理 / 水墨远山 / 晨光 / 飞鸟 / 8 片飘落银杏 / 竖排题字 / 朱红印章 / 两个独立入口卡片，纯 CSS + 内联 SVG 动画 | `public/cover.html`、`public/portal.css`、`public/portal.js` |
+| 6 | 两端独立登录页：用户端浅色书院风、管理端深墨蓝控制台 + 流动日志装饰；管理端独占「创建管理员账号」 | `public/user/login.html`、`public/admin/login.html` |
+| 7 | 工作台与后台补书院气质装饰层（顶栏金线、卡片标题朱红竖标、侧栏楷体院训、墨青 hero） | `public/style.css` |
+| 8 | 冒烟测试扩到 **73 项**，新增三套入口可访问性、两端互不出现对方入口、大小写绕过、跨端页面越权、旧链接兼容、门户角色约束等断言 | `scripts/smoke-test.js` |
+
+**复测**：`node scripts/smoke-test.js` **73/73 通过**；12 个 JS 语法检查通过；`PORTAL_MISMATCH` 已进入真实日志的错误码聚合。
+
 ---
 
 ## 隐私与数据
@@ -172,12 +195,17 @@ lib/telemetry.js         自动脱敏运行日志 + 订阅广播 + 聚合
 lib/extractor.js         中文通知结构化引擎
 lib/api.js               鉴权 / 业务接口 / 管理后台接口
 lib/store.js             JSON 原子读写
-public/login.html        登录 / 首次初始化
-public/index.html        学生 / 教师工作台
-public/admin.html        管理员实时日志后台
-public/style.css         统一设计系统（8px 栅格 / 设计令牌）
-public/{login,app,admin}.js
-scripts/smoke-test.js    50 项冒烟测试（隔离数据目录）
+public/cover.html        中国书院 × 校园文化动态封面（/ 总入口）
+public/portal.css        封面与两端登录页视觉 / 全部动画
+public/portal.js         封面状态与两端登录、初始化逻辑
+public/user/login.html   用户端独立登录页（浅色书院风）
+public/user/index.html   学生 / 教师工作台
+public/user/app.js       用户端交互
+public/admin/login.html  管理端独立登录页（深墨蓝）+ 首次初始化
+public/admin/index.html  管理员实时日志后台
+public/admin/admin.js    管理端交互
+public/style.css         工作台 / 后台设计系统 + 书院气质装饰层
+scripts/smoke-test.js    73 项冒烟测试（隔离数据目录）
 scripts/daily-report.js  每日日志汇总 + 一键 git 同步
 scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
 data/                    业务数据，全部由使用者录入

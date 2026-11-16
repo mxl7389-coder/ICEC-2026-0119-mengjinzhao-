@@ -43,7 +43,6 @@
       <div class="nav-label">协作与说明</div>
       <button class="nav-item" data-view="feedback"><svg><use href="#i-chat"/></svg>使用反馈</button>
       <button class="nav-item" data-view="about"><svg><use href="#i-info"/></svg>项目说明</button>
-      <a class="nav-item hidden" id="nav-admin" href="/admin.html"><svg><use href="#i-shield"/></svg>管理后台</a>
     </nav>
     <div class="side-foot">
       <div class="live-dot"><i></i> 本地服务运行中</div>
@@ -65,7 +64,6 @@
           <div class="user-meta"><strong id="user-name">—</strong><span id="user-role">—</span></div>
           <div class="user-menu" id="user-menu">
             <button class="menu-item" id="btn-pass"><svg><use href="#i-shield"/></svg>修改密码</button>
-            <a class="menu-item hidden" id="link-admin" href="/admin.html"><svg><use href="#i-chart"/></svg>进入管理后台</a>
             <div class="menu-sep"></div>
             <button class="menu-item danger" id="btn-logout"><svg><use href="#i-logout"/></svg>退出登录</button>
           </div>
@@ -103,7 +101,7 @@
           <div class="card">
             <div class="card-head"><h3>近 7 天程序调用趋势</h3><span class="chip">自动采集</span></div>
             <div id="trend-chart" class="trend-chart"></div>
-            <div class="chart-foot">仅统计次数与耗时，不含任何原文；实时明细在管理员后台查看</div>
+            <div class="chart-foot">仅统计次数与耗时，不含任何原文；明细由运行日志自动采集，不在用户端展示</div>
           </div>
           <div class="card">
             <div class="card-head"><h3>我的待办</h3><button class="link-btn" data-go="notice">全部 →</button></div>
@@ -264,18 +262,18 @@
           <table class="table">
             <thead><tr><th>角色</th><th>入口</th><th>可以做的事</th></tr></thead>
             <tbody>
-              <tr><td><span class="tag tag-blue">学生</span></td><td><code>/index.html</code></td><td>录入并查看自己的通知待办与错题、登记器材借还、提交真实反馈</td></tr>
-              <tr><td><span class="tag tag-ok">教师</span></td><td><code>/index.html</code></td><td>学生全部能力 + 新增/删除器材、查看全部通知与错题、查看反馈汇总</td></tr>
-              <tr><td><span class="tag tag-gray">管理员</span></td><td><code>/admin.html</code></td><td>实时运行日志（SSE 推送）、错误码聚合、账号管理、每日日志汇总与数据总览</td></tr>
+              <tr><td><span class="tag tag-blue">学生</span></td><td><code>/user/</code></td><td>录入并查看自己的通知待办与错题、登记器材借还、提交真实反馈</td></tr>
+              <tr><td><span class="tag tag-ok">教师</span></td><td><code>/user/</code></td><td>学生全部能力 + 新增/删除器材、查看全部通知与错题、查看反馈汇总</td></tr>
             </tbody>
           </table>
-          <div class="admin-note">账号全部由使用者创建：首次打开时由你设置第一位管理员，其余账号由管理员在后台创建。系统不预置任何账号、器材、通知、错题或反馈。</div>
+          <div class="admin-note">用户端与管理端为两套完全独立的入口，登录后互不跳转。所有账号均由使用者创建，系统不预置任何账号、器材、通知、错题或反馈。</div>
         </div>
         <div class="two-col" style="margin-top:16px">
           <div class="card">
             <div class="card-head"><h3>怎么跑起来</h3></div>
             <pre class="codeblock">node server.js
-# 浏览器打开 http://localhost:5173/login.html
+# 浏览器打开 http://localhost:5173/
+# 封面总入口 → 用户端 /user/ ｜ 管理端 /admin/
 # 端口被占用时会自动顺延，终端会打印实际地址
 
 # 每日收工前同步日志
@@ -291,10 +289,10 @@ lib/telemetry.js     自动脱敏运行日志
 lib/extractor.js     中文通知结构化引擎
 lib/api.js           业务接口 + 管理后台接口
 lib/store.js         JSON 原子存储
-public/login.html    登录 / 首次初始化
-public/index.html    学生 / 教师工作台
-public/admin.html    管理员实时日志后台
-scripts/             日报 / 冒烟测试
+public/cover.html    动态封面总入口
+public/user/         用户端（独立登录 + 工作台）
+public/admin/        管理端（独立登录 + 实时日志后台）
+scripts/             日报 / 冒烟测试 / 账号维护
 data/                业务数据（全部由用户录入）
 process_logs/        每日 telemetry + 日报</pre>
           </div>
@@ -326,6 +324,6 @@ process_logs/        每日 telemetry + 日报</pre>
 </div>
 
 <div id="toast" class="toast"></div>
-<script src="/app.js"></script>
+<script src="/user/app.js"></script>
 </body>
 </html>
