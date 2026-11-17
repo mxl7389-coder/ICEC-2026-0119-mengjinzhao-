@@ -14,16 +14,41 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const telemetry = require('./lib/telemetry');
 const auth = require('./lib/auth');
 const api = require('./lib/api');
 
 let PORT = Number(process.env.PORT || 5173);
-const HOST = process.env.HOST || '127.0.0.1';
+/**
+ * 默认只监听 127.0.0.1（仅本机可访问）。
+ * LAN=1 或 HOST=0.0.0.0 时开放局域网：监听所有网卡、启动日志打印可用 IP。
+ * 局域网模式额外限制「首次创建管理员」只能在本机完成，避免被同网段抢注。
+ */
+const LAN_MODE = process.env.LAN === '1' || process.env.HOST === '0.0.0.0';
+const HOST = process.env.HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1');
 const MAX_PORT_RETRY = 8;
 let portRetry = 0;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY = 1024 * 1024; // 1 MB
+
+/** 畸形百分号编码不应打挂进程：解码失败时保留原串，由后续路由返回 404 */
+function safeDecode(s) {
+  try { return decodeURIComponent(s); } catch (_) { return String(s); }
+}
+function isLoopback(req) {
+  const ip = String(req.socket.remoteAddress || '');
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+function lanAddresses() {
+  const out = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family === 'IPv4' && !a.internal) out.push({ name, address: a.address });
+    }
+  }
+  return out;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -216,16 +241,27 @@ function handleLogStream(req, res, user, session) {
 
 const server = http.createServer(async (req, res) => {
   const started = process.hrtime.bigint();
-  const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
-  const pathname = decodeURIComponent(url.pathname);
-  const cookies = auth.parseCookies(req.headers.cookie);
-  const token = cookies[auth.COOKIE_NAME] || '';
-  const user = auth.resolve(token);
   const ip = req.socket.remoteAddress || 'local';
-  const session = anonSession(req, user);
+  let url;
+  let pathname = '/';
+  let user = null;
+  let token = '';
+  let session = 'anonymous';
   let meta = {};
   let statusCode = 200;
   let errorCode = null;
+
+  // URL / Cookie 解码放在 try 内：畸形编码只返回 400，不能让未捕获异常终止进程
+  try {
+    url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
+    pathname = safeDecode(url.pathname);
+    const cookies = auth.parseCookies(req.headers.cookie);
+    token = cookies[auth.COOKIE_NAME] || '';
+    user = auth.resolve(token);
+    session = anonSession(req, user);
+  } catch (_) {
+    return send(res, 400, { error: 'BAD_REQUEST', message: '请求格式不正确' });
+  }
 
   const finish = () => {
     const duration = Number(process.hrtime.bigint() - started) / 1e6;
@@ -274,6 +310,14 @@ const server = http.createServer(async (req, res) => {
       return send(res, 403, { error: errorCode, message: '请求来源与本站不一致，已拒绝' });
     }
 
+    // 局域网开放后，只有本机可以创建第一位管理员，避免同网段设备抢注
+    if (LAN_MODE && pathname === '/api/auth/setup' && !isLoopback(req)) {
+      errorCode = 'SETUP_LOCAL_ONLY';
+      statusCode = 403;
+      res.on('finish', finish);
+      return send(res, 403, { error: errorCode, message: '首次创建管理员只能在本机完成' });
+    }
+
     const body = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE'
       ? await readBody(req) : {};
     const result = await api.handle({
@@ -295,7 +339,9 @@ const server = http.createServer(async (req, res) => {
     if (errorCode === 'BODY_TOO_LARGE' || errorCode === 'INVALID_JSON') statusCode = 400;
     console.error('[api-error]', errorCode, err.message);
     res.on('finish', finish);
-    return send(res, statusCode, { error: errorCode, message: err.message });
+    // 5xx 不外泄内部路径、子进程 stderr 或文件系统错误；4xx 业务提示照常返回
+    const message = statusCode >= 500 ? '服务内部错误，详情见服务端日志' : err.message;
+    return send(res, statusCode, { error: errorCode, message });
   }
 });
 
@@ -314,13 +360,25 @@ server.on('error', (err) => {
 
 server.on('listening', () => {
   console.log('');
-  console.log('  校园事务台 CampusDesk 已启动');
+  console.log('  校园事务台 CampusDesk 已启动' + (LAN_MODE ? '（局域网模式）' : '（仅本机）'));
   console.log('  封面总入口 → http://localhost:' + PORT + '/');
   console.log('  用户端 /user/  （独立登录 + 学生/教师工作台）');
   console.log('  管理端 /admin/ （独立登录 + 实时日志后台）');
+  if (LAN_MODE) {
+    console.log('  局域网地址（同一 Wi-Fi 下的手机 / 同学电脑打开）：');
+    for (const a of lanAddresses()) {
+      console.log('    http://' + a.address + ':' + PORT + '/   [' + a.name + ']');
+    }
+    console.log('  安全：明文 HTTP，勿在公共网络开放；首次创建管理员仅限本机。');
+  }
   console.log('  日志目录 → ' + telemetry.LOG_DIR);
   console.log('  按 Ctrl+C 停止（每日同步请运行 node scripts/daily-report.js --sync）');
   console.log('');
+});
+
+// 兜底：任何遗漏的异步异常只记录、不终止服务（局域网开放后尤为重要）
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandled-rejection]', err && err.message ? err.message : String(err));
 });
 
 server.listen(PORT, HOST);

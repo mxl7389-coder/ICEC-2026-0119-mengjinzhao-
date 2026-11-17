@@ -40,7 +40,7 @@ const TITLES = {
   notice: ['通知与任务', '导入 → 提取 → 人工审核 → 生成待办', '事务处理'],
   equipment: ['实验器材', '档案、借出、归还、库存与逾期自动核对', '事务处理'],
   mistake: ['错题归档', '按遗忘曲线排队复习，直到真正掌握', '事务处理'],
-  assistant: ['智能助手', '当前能力边界与后续阶段规划', '智能服务'],
+  assistant: ['智能助手', '本地离线问答 · 回答附来源 · 资料不足明确拒答', '智能服务'],
   activity: ['我的足迹', '仅显示当前账号的脱敏调用摘要', '智能服务'],
   feedback: ['使用反馈', '来自真实使用者的评价与改进建议', '协作与系统'],
   about: ['项目与功能地图', 'SRS 功能编号与实现状态逐项对照', '协作与系统'],
@@ -54,7 +54,7 @@ const ACTION_LABEL = {
   notice: '查看通知', mistake: '查看错题', feedback: '查看反馈', loan: '查看借还',
   health: '健康检查', index: '打开工作台', home: '打开封面',
   revise: '版本比对', preview: '预览日历', progress: '查看反馈进度',
-  audit: '查看审计', backup: '备份导出',
+  audit: '查看审计', backup: '备份导出', ask: '询问助手',
 };
 
 async function api(path, opts = {}) {
@@ -277,7 +277,7 @@ function renderDashboard() {
     .sort((a, b) => String(a.deadline || '9999').localeCompare(String(b.deadline || '9999'))).slice(0, 4);
   $('#dash-todos').innerHTML = pending.length ? pending.map((n) =>
     '<div class="mini-item"><i class="dot' + (n.deadline && n.deadline <= addDays(d.today, 2) ? ' warn' : '') + '"></i>' +
-    '<span class="txt">' + esc(n.title) + '</span><span class="date">' + (n.deadline ? '截止 ' + fmtDate(n.deadline) : fmtDate(n.event_date)) + '</span></div>').join('')
+    '<span class="txt">' + esc(n.title) + '</span><span class="date">' + (n.deadline ? '截止 ' + esc(fmtDate(n.deadline)) : esc(fmtDate(n.event_date))) + '</span></div>').join('')
     : '<div class="mini-empty">暂无待办，去「通知与任务」粘贴一条通知 →</div>';
 
   const due = S.mistakes.filter((m) => m.due).slice(0, 4);
@@ -559,6 +559,75 @@ function renderFeedback() {
     : '<div class="table-empty">还没有收到反馈，请邀请同学真实试用后填写</div>';
 }
 
+/* ---------------------------- 本地离线辅助助手 ---------------------------- */
+const AI_SAMPLES = ['最近的截止是什么', '我还有哪些待办没完成', '示波器还有几台',
+  '有没有逾期的借用', '今天要复习哪些错题', '你能做什么'];
+
+function aiBubble(role, text, sources) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ai-msg ' + (role === 'user' ? 'ai-user' : 'ai-bot');
+  const bubble = document.createElement('div');
+  bubble.className = 'ai-bubble';
+  bubble.textContent = text; // 纯文本写入，绝不拼接 HTML
+  wrap.appendChild(bubble);
+  if (sources && sources.length) {
+    const box = document.createElement('div');
+    box.className = 'ai-src';
+    const title = document.createElement('b');
+    title.textContent = '资料来源（' + sources.length + '）';
+    box.appendChild(title);
+    const list = document.createElement('ul');
+    for (const s of sources) {
+      const li = document.createElement('li');
+      li.textContent = '[' + (s.type || '记录') + '] ' + (s.title || s.id)
+        + (s.field ? ' · ' + s.field : '') + (s.value ? '：' + s.value : '');
+      list.appendChild(li);
+    }
+    box.appendChild(list);
+    wrap.appendChild(box);
+  }
+  const log = $('#ai-log');
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function askAssistant(q) {
+  const question = String(q || '').trim();
+  if (!question) return;
+  const btn = $('#btn-ai-ask');
+  if (btn.disabled) return; // 示例按钮连点时同样防重复提交
+  aiBubble('user', question);
+  $('#ai-question').value = '';
+  btn.disabled = true;
+  btn.textContent = '查询中…';
+  try {
+    const r = await api('assistant/ask', { method: 'POST', body: { question } });
+    aiBubble('bot', r.text || '（没有返回内容）', r.sources);
+  } catch (err) {
+    aiBubble('bot', '查询失败：' + (err.message || '服务未响应'));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '提问';
+    $('#ai-question').focus();
+  }
+}
+
+function initAssistant() {
+  const box = $('#ai-samples');
+  for (const s of AI_SAMPLES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-soft btn-sm';
+    b.textContent = s;
+    b.addEventListener('click', () => askAssistant(s));
+    box.appendChild(b);
+  }
+  $('#btn-ai-ask').addEventListener('click', () => askAssistant($('#ai-question').value));
+  $('#ai-question').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); askAssistant($('#ai-question').value); }
+  });
+}
+
 /* -------------------------------- 事件 -------------------------------- */
 function bindEvents() {
   $('#nav').addEventListener('click', (e) => {
@@ -783,6 +852,7 @@ function applyRole() {
     S.user = me.user; S.permissions = me.permissions || [];
   } catch (_) { return; }
   bindEvents();
+  initAssistant();
   try {
     const [b, a] = await Promise.all([api('bootstrap'), api('activity?days=7')]);
     S.dashboard = b.dashboard; S.notices = b.notices; S.equipment = b.equipment;

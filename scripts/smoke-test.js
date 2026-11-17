@@ -100,7 +100,7 @@ function streamReader(res) {
 }
 
 async function main() {
-  console.log('\n== CampusDesk 冒烟测试（v6.1 · 日志隔离 / 5 种导入 / 审计备份 / 双端界面）==\n');
+  console.log('\n== CampusDesk 冒烟测试（v6.2 · 局域网前置安全 / 本地离线助手 / 日志隔离 / 审计备份）==\n');
   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
   if (!fs.existsSync(SMOKE_LOG_DIR)) fs.mkdirSync(SMOKE_LOG_DIR, { recursive: true });
   const mainLogBefore = telemetry.readDay(telemetry.localDay()).length;
@@ -475,7 +475,7 @@ async function main() {
     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
     check('按天读取日志', day.data.rows.length > 0);
     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.1.0');
+    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.2.0');
     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
     const overview = await admin.req('GET', '/api/admin/overview');
@@ -487,6 +487,75 @@ async function main() {
       users.data.items.every((u) => !('password_hash' in u) && !('salt' in u)));
     const report = await admin.req('POST', '/api/admin/report', {});
     check('当日日报生成', report.data.ok);
+
+    /* ---------- v6.2 本地离线辅助助手 ---------- */
+    // 前面保存的那条已被 toggle 标记完成；这里补一条带截止的未完成通知验证来源标注
+    const dated = await student.req('POST', '/api/notice/save', {
+      notice: { title: '带截止的测试通知', category: '教务',
+        event_date: '2026-11-25', deadline: '2026-11-24', location: '教三 201' },
+    });
+    check('助手测试夹具：带截止日期的通知已入库',
+      dated.status === 200 && dated.data.deadline === '2026-11-24');
+    const aiAnon = await anon.req('POST', '/api/assistant/ask', { question: '最近的截止是什么' });
+    check('助手接口需要登录', aiAnon.status === 401);
+    const aiEmpty = await student.req('POST', '/api/assistant/ask', { question: '' });
+    check('空问题被拒绝', aiEmpty.status === 400 && aiEmpty.data.error === 'EMPTY_QUESTION');
+    const aiHelp = await student.req('POST', '/api/assistant/ask', { question: '你能做什么' });
+    check('助手标明本地规则引擎与能力说明', aiHelp.status === 200 &&
+      aiHelp.data.engine === 'local-rules' && aiHelp.data.answered === true && aiHelp.data.intent === 'help');
+    const aiDeadline = await student.req('POST', '/api/assistant/ask', { question: '最近的截止是什么' });
+    check('截止查询回答附资料来源', aiDeadline.status === 200 && aiDeadline.data.answered === true &&
+      aiDeadline.data.sources.length > 0 &&
+      aiDeadline.data.sources.every((s) => s.type === 'notice' && s.id && s.title) &&
+      aiDeadline.data.sources.some((s) => s.id === dated.data.id && s.value === '2026-11-24'));
+    const aiEq = await student.req('POST', '/api/assistant/ask', { question: '器材还有几台可用' });
+    check('器材库存查询可用', aiEq.status === 200 && aiEq.data.answered === true &&
+      aiEq.data.sources.some((s) => s.type === 'equipment'));
+    const aiUnknown = await student.req('POST', '/api/assistant/ask',
+      { question: '帮我预测一下明天的股票走势好吗' });
+    check('超出能力的问题明确拒答、不编造', aiUnknown.status === 200 &&
+      aiUnknown.data.answered === false && /不会|无法/.test(aiUnknown.data.text));
+    const secret = 'ZZ私密问题串_' + Date.now();
+    await student.req('POST', '/api/assistant/ask', { question: secret });
+    const aiDayFile = path.join(SMOKE_LOG_DIR, telemetry.localDay() + '.jsonl');
+    const aiLogText = fs.existsSync(aiDayFile) ? fs.readFileSync(aiDayFile, 'utf8') : '';
+    check('助手问题原文不写入日志', !aiLogText.includes(secret));
+    const privateTitle = '教师专属内部通知标记ABC123';
+    await teacher.req('POST', '/api/notice/save',
+      { notice: { title: privateTitle, category: '教务', event_date: '2026-12-01', deadline: '2026-12-01' } });
+    const aiScoped = await student.req('POST', '/api/assistant/ask', { question: '有哪些通知' });
+    check('学生助手回答不含他人通知', aiScoped.status === 200 &&
+      !String(aiScoped.data.text).includes(privateTitle) &&
+      aiScoped.data.sources.every((s) => s.title !== privateTitle));
+    const mePerm = await student.req('GET', '/api/auth/me');
+    check('助手权限点已下发给登录用户',
+      (mePerm.data.permissions || []).includes('assistant.ask'));
+
+    /* ---------- v6.2 上线前置安全项 ---------- */
+    const fakeId = 'FAKE_CLIENT_ID_123';
+    const fakeSave = await teacher.req('POST', '/api/notice/save',
+      { notice: { id: fakeId, title: '伪造主键测试', event_date: '2026-12-02' } });
+    check('通知主键由服务端生成，客户端不能伪造', fakeSave.status === 200 &&
+      fakeSave.data.id !== fakeId && String(fakeSave.data.id).startsWith('nt_'));
+    const eqAll = await teacher.req('GET', '/api/equipment/list');
+    const someItem = (eqAll.data.items || []).find((x) => x.available > 0);
+    let loanDenied = false;
+    if (someItem) {
+      const tLoan = await teacher.req('POST', '/api/loan/create',
+        { item_id: someItem.id, qty: 1, borrower: '教师本人' });
+      const tRow = tLoan.status === 200 && (tLoan.data.loans || []).find((l) => l.borrower === '教师本人');
+      if (tRow) {
+        const denied = await student.req('POST', '/api/loan/return', { id: tRow.id, returned_qty: 1 });
+        loanDenied = denied.status === 403 && denied.data.error === 'FORBIDDEN';
+      }
+    }
+    check('学生不能归还他人登记的借用', loanDenied);
+    const badUrl = await anon.req('GET', '/api/health/%E0%A4%A');
+    const alive = await anon.req('GET', '/api/health');
+    check('畸形 URL 不打挂服务', badUrl.status < 500 && alive.status === 200 && alive.data.ok === true);
+    const badCookie = await anon.req('GET', '/api/health', undefined,
+      { headers: { Cookie: 'cd_session=%ZZ' } });
+    check('畸形 Cookie 不打挂服务', badCookie.status === 200);
 
     /* ---------- 退出登录 ---------- */
     const out = await student.req('POST', '/api/auth/logout', {});

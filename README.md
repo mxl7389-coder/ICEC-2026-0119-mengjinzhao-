@@ -69,12 +69,29 @@ node server.js
 **第一次打开**：封面页 → 点「管理员 · 进入管理后台」→ 管理端登录页显示「创建管理员账号」，填好显示名称、账号、密码后自动进入后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者从 `/user/` 登录后自行录入数据。**系统当前账号已按你的要求清空，正处于这个「重新注册」状态。**
 
 ```bash
-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录 + 隔离日志目录，115 项断言
+node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录 + 隔离日志目录，129 项断言
 node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
 git push                      # 需要提交到 GitHub 时再执行
 ```
 
 更详细的操作步骤见 [`docs/使用说明.md`](docs/使用说明.md)。
+
+### 局域网访问（同一 Wi-Fi 下的手机 / 同学电脑）
+
+```bash
+LAN=1 node server.js
+# 等价 HOST=0.0.0.0 node server.js；不带 LAN 时默认仍只监听 127.0.0.1
+```
+
+启动日志会列出所有网卡的 IPv4 地址，例如 `http://10.1.44.109:5174/`；把**物理网卡**那一条发给同学即可（VirtualBox / VMware / WSL 的虚拟网卡地址只在虚拟机内有效）。
+
+Windows 首次开放需放行入站端口。**以管理员身份**打开 PowerShell 执行一次：
+
+```powershell
+New-NetFirewallRule -DisplayName 'CampusDesk LAN 5174' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5174 -Profile Any -RemoteAddress LocalSubnet
+```
+
+> 安全边界：明文 HTTP、仅限本地子网，**不要在公共 Wi-Fi 或校园大网开放**，登录密码在局域网内为明文传输。局域网模式下「首次创建管理员」被限制为只能在本机（`127.0.0.1`）完成，避免同网段设备抢注；其余账号由你在后台创建后线下告知。本机若配置了 HTTP 代理，测试 `10.x` 地址请加 `--noproxy '*'`，或直接用 `localhost`。
 
 ---
 
@@ -85,7 +102,7 @@ git push                      # 需要提交到 GitHub 时再执行
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.1.0","source":"live","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.2.0","source":"live","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
 ```
 
 - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
@@ -113,7 +130,7 @@ git push                      # 需要提交到 GitHub 时再执行
 
 ## Git 迭代记录
 
-> 以下各章节中出现的「50 / 73 / 89 项断言」及 `v4.0.1` / `v5` / `v6.0.0` 等版本号，均为**当时版本的历史记录**，保留原样便于对照 `git diff`；当前版本为 **v6.1.0**，冒烟测试为 **115/115 通过**。
+> 以下各章节中出现的「50 / 73 / 89 / 115 项断言」及 `v4.0.1` / `v5` / `v6.0.0` / `v6.1.0` 等版本号，均为**当时版本的历史记录**，保留原样便于对照 `git diff`；当前版本为 **v6.2.0**，冒烟测试为 **129/129 通过**。
 
 ### v1 · 基础可运行版
 - 零依赖 HTTP 服务 + 静态资源 + 统一错误处理
@@ -192,7 +209,7 @@ git push                      # 需要提交到 GitHub 时再执行
 
 **复测**：`node scripts/smoke-test.js` **89/89 通过**；12 个 JS 语法检查通过；用户端 89 / 管理端 65 个静态 DOM 引用全部核对存在（3 个 `review-*` 为审核区动态生成）。日志 `app_version` 升到 `v6.0.0`。
 
-> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、异常登记、AI 模型管理仍在「功能地图」标注为规划中；**操作审计已于 v6.1 落地**。
+> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。**v6.2 已落地本地离线助手**（CM-FR-402~404 / 406 / 407：只读查询自己录入的数据、附来源、不足时拒答），但它不是大语言模型，不提供多轮生成式对话。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、异常登记、AI 模型管理仍在「功能地图」标注为规划中；**操作审计已于 v6.1 落地**。
 
 ### v6.1 · 验收数据可信度修复 + SRS 功能补齐
 
@@ -210,6 +227,23 @@ git push                      # 需要提交到 GitHub 时再执行
 | 交付物对照 | `docs/交付物对照.md` | SRS 第 10 章交付清单逐项状态、验收指标对照、架构说明与 JSON→SQLite 表映射 |
 
 **复测**：`node scripts/smoke-test.js` **115/115 通过**（新增 26 项），12 个 JS 语法检查通过，用户端 100 / 管理端 82 个 DOM 引用核对（4 个 `review-*` 为审核区动态生成）。版本 `v6.1.0`。**未做**：SQLite 迁移（会引入依赖、破坏零依赖即跑，建议阶段验收后再动）、GitHub 远端（需要你的账号，见下方）。
+
+### v6.2 · 局域网访问 + 本地离线辅助助手
+
+**需求驱动**：把站点开放给同一 Wi-Fi 下的手机 / 同学电脑访问，并在站内加一个辅助 AI。AI 形态经确认为「本地离线助手」——不联网、不需要 API Key、不引入依赖，保持「零依赖即跑」与「数据不出本机」。
+
+| 改动 | 文件 | 真实效果 |
+| --- | --- | --- |
+| 局域网模式 | `server.js` | `LAN=1` / `HOST=0.0.0.0` 监听所有网卡，启动日志打印各网卡 IPv4；不带参数时默认仍只绑 `127.0.0.1` |
+| 上线前置安全 | `server.js`、`lib/auth.js`、`lib/api.js`、`public/user/app.js` | URL / Cookie 解码移进 try 并加全局 rejection 兜底，畸形输入不再打挂进程；5xx 不外泄内部路径；首次创建管理员仅限本机；通知主键改由服务端生成；借用归还补归属校验；看板日期字段转义；学生借用明细按 `owner_id` 过滤；轮询游标不再跳过 200 条 |
+| 本地离线助手 | `lib/assistant.js`（新增） | 零依赖、不联网、只读。按意图检索通知 / 待办 / 器材库存 / 逾期 / 错题，回答附 `sources`（记录类型 + id + 字段 + 值），资料不足或超出能力明确拒答 |
+| 助手接口 | `lib/api.js` | `POST /api/assistant/ask`，需登录 + `assistant.ask` 权限；学生按 `owner_id` 隔离；`meta` 只记 `q_len` / `intent` / `source_count`，问题原文不落盘 |
+| 助手界面 | `public/user/index.html`、`app.js`、`style.css` | 「智能助手」从规划占位改为真实问答：示例问题、回车发送、防重复提交、纯 `textContent` 渲染、来源列表；功能地图同步为「已实现」 |
+| 状态修正 | 用户端功能地图 | CM-FR-202 不再同时标「已实现 / 规划中」；CM-FR-402~404 / 406 / 407 单列「已实现」，401 / 405 / 302 仍为规划中 |
+
+**能力边界（重要）**：助手是**确定性的本地检索 + 规则匹配，不是大语言模型**，只回答上述几类问题、不做开放域闲聊、不生成内容；回答中的每个数字都来自你录入的记录，查不到会直接说「本地还没有…」。未接入 Ollama / OCR / RAG，页面不提供承诺不了的多轮对话。
+
+**复测**：`node scripts/smoke-test.js` **129/129 通过**（新增 14 项覆盖助手鉴权 / 拒答 / 来源 / 脱敏 / 数据隔离 / 主键 / 越权 / 畸形输入），13 个 JS 语法检查通过；服务以 `LAN=1` 重启后 `/api/health` 为 `v6.2.0`，局域网 IP 下封面 / 用户端 / 管理端 / 静态资源全部 200。**未做**：防火墙入站规则（当前会话无管理员权限，需你按上文执行一次）、GitHub 远端、SQLite 迁移。
 
 ---
 
@@ -249,6 +283,7 @@ server.js                HTTP 服务 / 静态鉴权 / SSE 实时流
 lib/auth.js              账号、密码哈希、会话与角色权限
 lib/telemetry.js         自动脱敏运行日志 + 订阅广播 + 聚合
 lib/extractor.js         中文通知结构化引擎
+lib/assistant.js         本地离线辅助助手（只读检索 / 来源标注 / 不足拒答）
 lib/api.js               鉴权 / 业务接口 / 管理后台接口
 lib/store.js             JSON 原子读写
 public/cover.html        中国书院 × 校园文化动态封面（/ 总入口）
@@ -261,7 +296,7 @@ public/admin/login.html  管理端独立登录页（深墨蓝）+ 首次初始�
 public/admin/index.html  管理员实时日志后台
 public/admin/admin.js    管理端交互
 public/style.css         工作台 / 后台设计系统 + 书院气质装饰层
-scripts/smoke-test.js    115 项冒烟测试（隔离数据目录 + 隔离日志目录）
+scripts/smoke-test.js    129 项冒烟测试（隔离数据目录 + 隔离日志目录）
 scripts/daily-report.js  每日日志汇总 + 连续天数自检 + 一键 git 同步
 scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
 data/                    业务数据 + 空的审计数据集，全部由使用者录入
@@ -276,6 +311,7 @@ docs/用户反馈表.md        8 份真实反馈空白模板
 | 目的 | 命令 |
 | --- | --- |
 | 启动网站 | `node server.js` |
+| 局域网访问（同一 Wi-Fi） | `LAN=1 node server.js`，再用手机打开日志里打印的 IP |
 | 指定端口 | `PORT=8080 node server.js` |
 | 跑接口测试（不污染真实日志） | `node scripts/smoke-test.js` |
 | 列出已注册账号 | `node scripts/reset-password.js` |
