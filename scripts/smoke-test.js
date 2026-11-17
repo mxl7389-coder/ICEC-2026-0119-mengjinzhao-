@@ -40,7 +40,7 @@ function makeSession() {
       }
       const ct = res.headers.get('content-type') || '';
       const data = ct.includes('json') ? await res.json() : await res.text();
-      return { status: res.status, data, location: res.headers.get('location') };
+      return { status: res.status, data, headers: res.headers, location: res.headers.get('location') };
     },
   };
 }
@@ -98,7 +98,7 @@ function streamReader(res) {
 }
 
 async function main() {
-  console.log('\n== CampusDesk 冒烟测试（v5 · 三套独立入口 + 角色隔离 + 实时日志）==\n');
+  console.log('\n== CampusDesk 冒烟测试（v6 · SRS 功能域重构 + 双端企业级界面）==\n');
   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, stdio: 'ignore',
@@ -229,6 +229,60 @@ async function main() {
     check('学生不能查看他人反馈汇总', fbList.status === 403);
     check('未知路由返回 404', (await admin.req('GET', '/api/not-exist')).status === 404);
 
+    /* ---------- v6 · SRS 对齐的真实能力 ---------- */
+    const extra = await student.req('POST', '/api/notice/parse', {
+      text: '教务处发布：关于期末考试安排的通知。请全体同学务必于12月20日前携带学生证、准考证到办公楼301参加，联系人：王老师，逾期不再受理。发布单位：教务处',
+    });
+    check('提取引擎补齐 SRS 字段（发布单位 / 材料 / 重要程度）',
+      extra.data.issuer === '教务处' && extra.data.materials.length >= 1 && extra.data.importance === '紧急',
+      'issuer=' + extra.data.issuer + ', materials=' + extra.data.materials.join('/') + ', importance=' + extra.data.importance);
+    check('提取结果标记「需人工审核」且引擎为本地规则',
+      extra.data.reviewed === false && extra.data.extract_engine === 'local-rules');
+
+    const dash = await student.req('GET', '/api/dashboard');
+    check('CM-FR-001 仪表盘指标齐备且含真实系统读数',
+      !!dash.data.notice && !!dash.data.loan && !!dash.data.equipment &&
+      !!dash.data.system && typeof dash.data.system.uptime_s === 'number' &&
+      typeof dash.data.system.rss_mb === 'number' && typeof dash.data.telemetry.today_calls === 'number',
+      'uptime=' + dash.data.system.uptime_s + 's, rss=' + dash.data.system.rss_mb + 'MB');
+
+    const act = await student.req('GET', '/api/activity?days=7');
+    check('最近操作足迹只返回当前会话的脱敏摘要',
+      act.status === 200 && act.data.scope === 'own_session' && act.data.items.length > 0 &&
+      act.data.items.every((r) => !('text' in r) && !('title' in r) && !('name' in r)),
+      act.data.items.length + ' 条');
+    check('未登录不能读取操作足迹', (await anon.req('GET', '/api/activity')).status === 401);
+
+    const eqArchive = await teacher.req('POST', '/api/equipment/add', {
+      name: '档案测试仪器', total: 2, code: 'EQ-CHK-001', model: 'TEST-2000',
+      location: '实验楼B203', purchased_at: '2026-01-15', unit: '台', note: '需定期校准',
+    });
+    const archived = eqArchive.data.items.find((i) => i.code === 'EQ-CHK-001');
+    check('CM-FR-201 器材档案完整字段真实落库',
+      !!archived && archived.model === 'TEST-2000' && archived.location === '实验楼B203' &&
+      archived.purchased_at === '2026-01-15' && archived.note === '需定期校准');
+
+    const ov = await admin.req('GET', '/api/admin/overview');
+    check('CM-FR-509 健康检查项与资源为真实读数',
+      Array.isArray(ov.data.checks) && ov.data.checks.length === 6 &&
+      typeof ov.data.resources.rss_mb === 'number' && ov.data.checks.every((c) => typeof c.ok === 'boolean'),
+      ov.data.checks.filter((c) => c.ok).length + '/' + ov.data.checks.length + ' 项通过');
+    check('版本时间线来自真实 git log', Array.isArray(ov.data.git_commits), (ov.data.git_commits || []).length + ' 条提交');
+    check('日报文件清单可读', Array.isArray(ov.data.report_files));
+
+    const expJson = await admin.req('GET', '/api/admin/export?format=json');
+    check('CM-FR-507 导出 JSON 日志',
+      expJson.status === 200 && expJson.data && Array.isArray(expJson.data.rows) && expJson.data.rows.length > 0,
+      expJson.data ? expJson.data.row_count + ' 行' : '');
+    const expCsv = await admin.req('GET', '/api/admin/export?format=csv');
+    check('CM-FR-507 导出 CSV 日志',
+      expCsv.status === 200 && String(expCsv.data).indexOf('ts,day,app_version') >= 0 &&
+      String(expCsv.data).split('\r\n').length > 2);
+    check('导出响应带下载文件名', /attachment; filename=/.test(expCsv.headers.get('content-disposition') || ''));
+    check('学生不能导出运行日志', (await student.req('GET', '/api/admin/export?format=json')).status === 403);
+    const sumRoles = await admin.req('GET', '/api/admin/summary?days=7');
+    check('日志按角色聚合可用', Object.keys(sumRoles.data.by_role || {}).length >= 1, JSON.stringify(sumRoles.data.by_role));
+
     /* ---------- 三套独立入口、页面级越权与旧链接兼容 ---------- */
     const manual = { redirect: 'manual' };
     const coverPage = await anon.req('GET', '/', undefined, manual);
@@ -247,6 +301,17 @@ async function main() {
       portalCss.status === 200 && String(portalCss.data).includes('@keyframes leafFall'));
     const portalJs = await anon.req('GET', '/portal.js', undefined, manual);
     check('入口脚本资源可访问', portalJs.status === 200);
+
+    const uPage = await student.req('GET', '/user/index.html', undefined, manual);
+    check('用户端 v6 八大视图与企业级组件齐备',
+      ['view-dashboard', 'view-notice', 'view-equipment', 'view-mistake', 'view-assistant', 'view-activity', 'view-feedback', 'view-about']
+        .every((id) => String(uPage.data).includes('id="' + id + '"')) &&
+      String(uPage.data).includes('id="sys-strip"') && String(uPage.data).includes('CM-FR-001'));
+    const aPage = await admin.req('GET', '/admin/index.html', undefined, manual);
+    check('管理端 v6 七大视图与监控组件齐备',
+      ['view-live', 'view-health', 'view-analytics', 'view-users', 'view-data', 'view-backup', 'view-about']
+        .every((id) => String(aPage.data).includes('id="' + id + '"')) &&
+      String(aPage.data).includes('id="health-checks"') && String(aPage.data).includes('id="perm-matrix"'));
 
     const uIdxAnon = await anon.req('GET', '/user/index.html', undefined, manual);
     check('未登录访问用户工作台→本端登录页',
@@ -305,12 +370,13 @@ async function main() {
     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
     check('按天读取日志', day.data.rows.length > 0);
     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v5.0.0');
+    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.0.0');
     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
     const overview = await admin.req('GET', '/api/admin/overview');
+    // v6 新增的「器材档案完整字段」用例会多写入 1 条器材，故此处期望 2
     check('数据总览含数据集条数', overview.data.datasets.notices === 1 &&
-      overview.data.datasets.equipment === 1 && overview.data.users_total === 3);
+      overview.data.datasets.equipment === 2 && overview.data.users_total === 3);
     const users = await admin.req('GET', '/api/admin/users');
     check('账号列表不泄露密码哈希', users.data.items.length === 3 &&
       users.data.items.every((u) => !('password_hash' in u) && !('salt' in u)));

@@ -518,3 +518,160 @@ h1, h2, h3, h4 { letter-spacing: .1px; }
 @media (prefers-reduced-motion: reduce) {
   .card { transition: none; }
 }
+
+/* ==========================================================================
+   v6 · 企业级工作台设计规范
+   依据 enterprise-ui-optimizer / website-ui-designer 令牌：
+   信息降噪 + 数据前置 + 栅格统一；状态色只用于语义，不用于装饰。
+   工作台与后台共用一套组件契约，仅由 .admin-shell 覆盖深色语境。
+   ========================================================================== */
+
+/* ---------- 1. 页面头：面包屑 → 标题 → 副标题，层级固定 ---------- */
+.topbar-title { min-width: 0; }
+.crumb { display: flex; align-items: center; gap: 7px; font-size: 10.5px; letter-spacing: .5px; color: var(--muted); font-weight: 600; margin-bottom: 2px; text-transform: uppercase; }
+.crumb-arrow { opacity: .5; font-size: 12px; }
+.eyebrow { font-size: 10.5px; letter-spacing: 1.1px; text-transform: uppercase; color: var(--primary); font-weight: 700; margin-bottom: 5px; }
+.admin-shell .eyebrow { color: #7fb0e8; }
+.section-intro.compact { margin-bottom: var(--sp-4); }
+.section-intro h2 { font-size: var(--fs-title); }
+.section-intro p b { color: var(--ink); font-weight: 650; }
+
+/* ---------- 2. 卡片：标题 + 副标题成对出现，弱化说明文字 ---------- */
+.card-head > div { min-width: 0; }
+.card-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; font-weight: 400; line-height: 1.5; }
+.card-head h3 { line-height: 1.45; }
+.form label em, .card-sub em { color: var(--red); font-style: normal; }
+.form label { position: relative; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); align-items: start; }
+.admin-shell .card { border-color: var(--line); box-shadow: var(--shadow-sm); }
+.admin-shell .kpi { box-shadow: var(--shadow-sm); }
+
+/* ---------- 3. 系统状态条：单行高密度元信息 ---------- */
+.system-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--sp-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px var(--sp-4); margin-bottom: var(--sp-4); font-size: 11.5px; color: var(--muted); }
+.sys-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.sys-item b { color: var(--ink-2); font-weight: 650; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--muted); flex: none; }
+.status-dot.ok { background: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }
+
+/* ---------- 4. 工具栏与筛选：独立容器，不与表格混排 ---------- */
+.toolbar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: 10px var(--sp-3); background: var(--surface-2); border: 1px solid var(--line-2); border-radius: var(--r-lg); margin-bottom: var(--sp-4); }
+.search-box { position: relative; flex: 1; min-width: 200px; }
+.search-box svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--muted); pointer-events: none; }
+.search-box input { width: 100%; border: 1px solid var(--line-strong); background: var(--surface); border-radius: var(--r-md); padding: 7px 10px 7px 32px; font-size: var(--fs-caption); outline: none; }
+.search-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 217, .09); }
+.toolbar select { border: 1px solid var(--line-strong); background: var(--surface); border-radius: var(--r-md); padding: 7px 9px; font-size: var(--fs-caption); outline: none; }
+
+/* ---------- 5. 流程步骤：把「导入→提取→审核→入库」显式化 ---------- */
+.flow-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); margin-bottom: var(--sp-4); }
+.flow-step { display: flex; align-items: center; gap: var(--sp-3); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px var(--sp-3); position: relative; }
+.flow-step:not(:last-child)::after { content: ''; position: absolute; right: -10px; top: 50%; width: 8px; height: 8px; border-top: 1.5px solid var(--line-strong); border-right: 1.5px solid var(--line-strong); transform: translateY(-50%) rotate(45deg); z-index: 1; }
+.flow-step i { width: 24px; height: 24px; border-radius: 50%; background: var(--primary-soft); color: var(--primary-dark); display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700; flex: none; }
+.flow-step div { min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.flow-step b { font-size: 12.5px; font-weight: 650; }
+.flow-step span { font-size: 10.5px; color: var(--muted); }
+
+/* ---------- 6. 四态提示条：语义色只用于传达状态 ---------- */
+.band { display: flex; gap: var(--sp-3); align-items: flex-start; padding: 11px var(--sp-4); border-radius: var(--r-lg); font-size: 12px; border: 1px solid transparent; }
+.band > svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.band > div { display: flex; flex-direction: column; gap: 2px; line-height: 1.65; }
+.band b { font-size: 12.5px; font-weight: 650; }
+.band span { opacity: .9; }
+.band-info { background: var(--blue-50); border-color: #cddfff; color: var(--blue-700); }
+.band-ok { background: var(--teal-50); border-color: #cfeee7; color: var(--teal-700); }
+.band-warn { background: var(--amber-50); border-color: #f6dfae; color: #8a5b0d; }
+.band-bad { background: var(--red-50); border-color: #f3c5c5; color: var(--red); }
+
+/* ---------- 7. 人工审核区（CM-FR-105） ---------- */
+.review-box { margin-top: var(--sp-5); padding: var(--sp-4); border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--surface-2); }
+.review-head { display: flex; align-items: center; gap: 7px; margin-bottom: var(--sp-3); }
+.review-head svg { width: 15px; height: 15px; color: var(--primary); }
+.review-head b { font-size: 13px; }
+.review-head span { font-size: 11px; color: var(--muted); margin-left: auto; }
+.review-box .form-row { margin-bottom: var(--sp-3); }
+.review-box input[type="text"], .review-box input[type="date"], .review-box input:not([type]) { border: 1px solid var(--line-strong); background: var(--surface); border-radius: var(--r-md); padding: 7px 10px; font-size: var(--fs-caption); width: 100%; }
+.review-check { display: flex !important; flex-direction: row !important; align-items: center; gap: var(--sp-2) !important; font-size: var(--fs-caption); color: var(--ink-2); cursor: pointer; }
+.review-check input { width: 15px !important; height: 15px; accent-color: var(--primary); flex: none; }
+.review-box .result-actions { margin-top: var(--sp-3); }
+
+/* ---------- 8. 表格：数值右对齐 / 操作列右对齐 / 表头语义化 ---------- */
+.table th { font-size: 11.5px; letter-spacing: .2px; border-bottom: 1px solid var(--line-strong); }
+.table td { font-size: 12.5px; }
+.table .num, .table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table .ops, .table th.ops { text-align: right; }
+.table .num { color: var(--ink-2); }
+.table code { font-size: 11px; }
+.roadmap td:first-child { font-family: var(--mono); font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.roadmap td:nth-child(2) { min-width: 180px; }
+.notice-item { align-items: flex-start; }
+.notice-title .tag { vertical-align: 1px; margin-left: 4px; font-size: 10.5px; }
+.eq-archive { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.eq-archive span { font-size: 10px; color: var(--muted); background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 1px 5px; }
+.eq-del { margin-top: 8px; width: 100%; }
+
+/* ---------- 9. 统一空状态：图标 + 结论 + 下一步动作 ---------- */
+.empty-v2 { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 168px; gap: 6px; padding: var(--sp-6) var(--sp-4); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); background: var(--surface-2); }
+.empty-v2 .empty-icon { margin-bottom: var(--sp-2); }
+.empty-v2 b { font-size: 13.5px; color: var(--ink-2); font-weight: 650; }
+.empty-v2 span { font-size: 11.5px; color: var(--muted); max-width: 380px; line-height: 1.7; }
+
+/* ---------- 10. 实现状态标签 / 导航规划标记 ---------- */
+.st { display: inline-block; padding: 2px 8px; border-radius: var(--r-sm); font-size: 11px; font-weight: 650; white-space: nowrap; }
+.st-ok { background: var(--teal-soft); color: var(--teal-700); }
+.st-part { background: var(--amber-50); color: var(--amber); }
+.st-plan { background: var(--surface-3); color: var(--ink-2); }
+.nav-badge.plan { background: var(--surface-3); color: var(--muted); font-size: 10px; }
+.admin-shell .nav-badge.plan { background: #1b2e4d; color: #8ba6ca; }
+
+/* ---------- 11. 健康检查清单 ---------- */
+.check-list { display: flex; flex-direction: column; }
+.check-row { display: flex; align-items: center; gap: var(--sp-3); padding: 11px var(--sp-2); border-bottom: 1px solid var(--line-2); }
+.check-row:last-child { border-bottom: 0; }
+.check-mark { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+.check-mark.ok { background: var(--teal-soft); color: var(--teal-700); }
+.check-mark.warn { background: var(--amber-50); color: var(--amber); }
+.check-body { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.4; }
+.check-body b { font-size: 12.5px; font-weight: 650; }
+.check-body span { font-size: 11px; color: var(--muted); }
+
+/* ---------- 12. 版本时间线 ---------- */
+.timeline { display: flex; flex-direction: column; }
+.tl-row { display: flex; align-items: center; gap: var(--sp-3); padding: 8px var(--sp-2); border-left: 2px solid var(--line); margin-left: 8px; position: relative; }
+.tl-row:last-child { border-left-color: transparent; }
+.tl-dot { position: absolute; left: -6px; width: 10px; height: 10px; border-radius: 50%; background: var(--line-strong); border: 2px solid var(--surface); box-sizing: content-box; }
+.tl-dot.latest { background: var(--primary); }
+.tl-date { font-size: 11px; color: var(--muted); width: 76px; flex: none; font-variant-numeric: tabular-nums; }
+.tl-hash { font-size: 11px; flex: none; }
+.tl-text { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 13. 深色管理端：克制化，避免装饰性渐变与重阴影 ---------- */
+.admin-shell .topbar { background: var(--surface); }
+.admin-shell .topbar::after { background: linear-gradient(90deg, rgba(96, 165, 232, .55), rgba(96, 165, 232, .1) 42%, transparent 72%); }
+.admin-shell .crumb { color: #8494a9; }
+.admin-shell .card-head h3::before { background: rgba(96, 165, 232, .8); }
+.admin-shell .console { border-radius: var(--r-lg); }
+.admin-shell .console-head h3 { font-weight: 650; }
+.admin-shell .kpi-num { letter-spacing: -.4px; }
+.admin-shell .band-info { background: #eef4fd; }
+.toggle-btn { display: inline-flex; align-items: center; gap: 5px; }
+.toggle-btn svg { width: 13px; height: 13px; }
+
+/* ---------- 14. 响应式补齐 ---------- */
+@media (max-width: 1180px) {
+  .grid-2, .split, .two-col, .two-col.uneven { grid-template-columns: 1fr; }
+  .flow-steps { grid-template-columns: repeat(2, 1fr); }
+  .flow-step::after { display: none; }
+}
+@media (max-width: 760px) {
+  .crumb { display: none; }
+  .flow-steps { grid-template-columns: 1fr; }
+  .system-strip { gap: 6px var(--sp-3); }
+  .review-head span { display: none; }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar select { width: 100%; }
+  .tl-date { width: 64px; }
+  .tl-hash { display: none; }
+  .table .ops, .table th.ops { text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-step, .card, .btn, .trend-bar { transition: none !important; animation: none !important; }
+}

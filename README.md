@@ -69,7 +69,7 @@ node server.js
 **第一次打开**：封面页 → 点「管理员 · 进入管理后台」→ 管理端登录页显示「创建管理员账号」，填好显示名称、账号、密码后自动进入后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者从 `/user/` 登录后自行录入数据。**系统当前账号已按你的要求清空，正处于这个「重新注册」状态。**
 
 ```bash
-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，73 项断言
+node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，89 项断言
 node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
 git push                      # 需要提交到 GitHub 时再执行
 ```
@@ -85,7 +85,7 @@ git push                      # 需要提交到 GitHub 时再执行
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v5.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
 ```
 
 - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
@@ -172,6 +172,24 @@ git push                      # 需要提交到 GitHub 时再执行
 
 **复测**：`node scripts/smoke-test.js` **73/73 通过**；12 个 JS 语法检查通过；`PORTAL_MISMATCH` 已进入真实日志的错误码聚合。
 
+### v6 · 按 SRS 重构双端信息架构 + 企业级设计系统
+
+**需求驱动**：登录 / 封面已优化，但学生教师端与管理员端仍偏简单；以《CampusMate 项目需求规格说明书 V1.0》的功能域为蓝图重构界面。原则是**只做真实可验证的能力**，SRS 中尚未实现的部分在「功能地图」里如实标注「规划中」，不提供空壳按钮。
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | 解析引擎补齐 CM-FR-102/104 的发布单位、联系方式 / 咨询、所需材料、重要程度；保持原有 8 项命中规则与置信度口径不变，历史 telemetry 仍可比 | `lib/extractor.js` |
+| 2 | 新增 `/api/activity`（只返回当前会话的脱敏操作摘要）、`/api/admin/export`（JSON / CSV 真实下载）；`health` / `overview` 增加真实内存读数、6 项健康检查、日报文件清单与 `git log` 提交记录；聚合新增 `by_role` | `lib/api.js`、`lib/telemetry.js` |
+| 3 | 器材档案补齐 CM-FR-201 的编号、型号、存放位置、购买日期、备注并真实落库 | `lib/api.js` |
+| 4 | **用户端**：导航按 SRS 功能域分 4 组；总览扩为 CM-FR-001 的 7 项指标 + 系统状态条 + 最近操作时间线；通知改「导入 → 提取 → 人工审核 → 生成待办」四步（可修改标题 / 截止、必须勾选确认、可拒绝）；新增通知检索、知识点掌握率、智能助手（能力边界）、我的足迹、SRS 功能地图 | `public/user/index.html`、`public/user/app.js` |
+| 5 | **管理端**：导航分为运行监控 / 系统管理 / 版本三组；新增系统健康、备份与导出、角色权限矩阵、按动作 / 角色聚合、版本迭代时间线（实时 `git log`）、管理员职责与 SRS 对照 | `public/admin/index.html`、`public/admin/admin.js` |
+| 6 | 企业级设计令牌落地：面包屑 + eyebrow 页面头、卡片副标题、四态提示条、流程步骤、审核区、表格数值右对齐 / 操作列、统一空状态、实现状态标签、健康检查清单、时间线组件；深色控制台克制化 | `public/style.css`（v6 章节） |
+| 7 | 冒烟测试扩到 **89 项**，新增 16 项覆盖 SRS 新字段、七项指标、足迹隔离、档案落库、健康检查、JSON/CSV 导出与下载头、按角色聚合、两端新视图 | `scripts/smoke-test.js` |
+
+**复测**：`node scripts/smoke-test.js` **89/89 通过**；12 个 JS 语法检查通过；用户端 89 / 管理端 65 个静态 DOM 引用全部核对存在（3 个 `review-*` 为审核区动态生成）。日志 `app_version` 升到 `v6.0.0`。
+
+> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、独立审计表、AI 模型管理均在「功能地图」中标注为规划中。
+
 ---
 
 ## 隐私与数据
@@ -205,7 +223,7 @@ public/admin/login.html  管理端独立登录页（深墨蓝）+ 首次初始�
 public/admin/index.html  管理员实时日志后台
 public/admin/admin.js    管理端交互
 public/style.css         工作台 / 后台设计系统 + 书院气质装饰层
-scripts/smoke-test.js    73 项冒烟测试（隔离数据目录）
+scripts/smoke-test.js    89 项冒烟测试（隔离数据目录）
 scripts/daily-report.js  每日日志汇总 + 一键 git 同步
 scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
 data/                    业务数据，全部由使用者录入
