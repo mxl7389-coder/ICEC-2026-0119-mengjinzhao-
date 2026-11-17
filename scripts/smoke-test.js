@@ -18,6 +18,8 @@ const ROOT = path.join(__dirname, '..');
 const PORT = 5199;
 const BASE = 'http://127.0.0.1:' + PORT;
 const SMOKE_DIR = path.join(ROOT, 'data', '__smoke__');
+// 测试产生的调用与故意触发的报错必须写入隔离日志目录，绝不混进真实 process_logs/
+const SMOKE_LOG_DIR = path.join(ROOT, 'process_logs', '__smoke__');
 const results = [];
 
 /** 每个会话独立保存 Cookie，模拟不同角色同时在线 */
@@ -26,7 +28,7 @@ function makeSession() {
   return {
     get cookie() { return cookie; },
     async req(method, urlPath, body, opts) {
-      const headers = { 'Content-Type': 'application/json' };
+      const headers = { 'Content-Type': 'application/json', ...((opts && opts.headers) || {}) };
       if (cookie) headers.Cookie = cookie;
       const res = await fetch(BASE + urlPath, {
         method, headers,
@@ -98,11 +100,14 @@ function streamReader(res) {
 }
 
 async function main() {
-  console.log('\n== CampusDesk 冒烟测试（v6 · SRS 功能域重构 + 双端企业级界面）==\n');
+  console.log('\n== CampusDesk 冒烟测试（v6.1 · 日志隔离 / 5 种导入 / 审计备份 / 双端界面）==\n');
   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
+  if (!fs.existsSync(SMOKE_LOG_DIR)) fs.mkdirSync(SMOKE_LOG_DIR, { recursive: true });
+  const mainLogBefore = telemetry.readDay(telemetry.localDay()).length;
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, stdio: 'ignore',
-    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR },
+    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR,
+      CAMPUSDESK_LOG_DIR: SMOKE_LOG_DIR, CAMPUSDESK_LOG_SOURCE: 'smoke' },
   });
 
   const anon = makeSession();      // 未登录
@@ -117,6 +122,16 @@ async function main() {
     /* ---------- 零预置数据 + 首次初始化 ---------- */
     const h = await anon.req('GET', '/api/health');
     check('服务健康检查', h.data.ok && h.data.initialized === false, 'version=' + h.data.version);
+    check('测试日志写入隔离目录，真实日志不被污染',
+      h.data.log_source === 'smoke' && String(h.data.log_dir).includes('__smoke__') &&
+      telemetry.readDay(telemetry.localDay()).every((r) => r.source !== 'smoke'),
+      'log_dir=' + h.data.log_dir);
+    check('连续天数自检来自真实日期文件', typeof h.data.streak === 'number',
+      'streak=' + h.data.streak);
+    check('安全响应头已下发（CSP 脚本白名单 / Referrer-Policy）',
+      String(h.headers.get('content-security-policy') || '').includes("script-src 'self'") &&
+      h.headers.get('referrer-policy') === 'same-origin',
+      'CSP=' + (h.headers.get('content-security-policy') || '').slice(0, 30) + '…');
     const state = await anon.req('GET', '/api/auth/state');
     check('首次启动未预置任何账号', state.data.initialized === false && state.data.user === null);
     const unauth = await anon.req('GET', '/api/bootstrap');
@@ -267,6 +282,9 @@ async function main() {
       Array.isArray(ov.data.checks) && ov.data.checks.length === 6 &&
       typeof ov.data.resources.rss_mb === 'number' && ov.data.checks.every((c) => typeof c.ok === 'boolean'),
       ov.data.checks.filter((c) => c.ok).length + '/' + ov.data.checks.length + ' 项通过');
+    check('管理总览含连续天数自检对象', !!ov.data.streak &&
+      typeof ov.data.streak.current_streak === 'number' && Array.isArray(ov.data.streak.gaps),
+      '连续 ' + ov.data.streak.current_streak + ' 天 / 累计 ' + ov.data.streak.days_count + ' 天');
     check('版本时间线来自真实 git log', Array.isArray(ov.data.git_commits), (ov.data.git_commits || []).length + ' 条提交');
     check('日报文件清单可读', Array.isArray(ov.data.report_files));
 
@@ -282,6 +300,91 @@ async function main() {
     check('学生不能导出运行日志', (await student.req('GET', '/api/admin/export?format=json')).status === 403);
     const sumRoles = await admin.req('GET', '/api/admin/summary?days=7');
     check('日志按角色聚合可用', Object.keys(sumRoles.data.by_role || {}).length >= 1, JSON.stringify(sumRoles.data.by_role));
+
+    /* ---------- v6.1 · 日志隔离之外的新增真实能力 ---------- */
+    for (const t of ['paste', 'txt', 'md', 'csv', 'json']) {
+      const r = await student.req('POST', '/api/notice/parse', {
+        text: extractor.SAMPLES[1].text, import_type: t,
+      });
+      check('CM-FR-101 导入方式 ' + t, r.status === 200 && r.data.import_type === t);
+    }
+    const badImport = await student.req('POST', '/api/notice/parse', {
+      text: extractor.SAMPLES[1].text, import_type: 'pdf',
+    });
+    check('未实现的导入类型如实回退为手动粘贴', badImport.data.import_type === 'paste');
+
+    const dupParse = await student.req('POST', '/api/notice/parse', { text: extractor.SAMPLES[0].text });
+    check('CM-FR-109 重复通知识别（只给相似度，不泄露他人原文）',
+      dupParse.data.duplicate_hint && dupParse.data.duplicate_hint.detected === true &&
+      dupParse.data.duplicate_hint.top_similarity >= 90 &&
+      !('duplicate_title' in dupParse.data.duplicate_hint),
+      'top=' + dupParse.data.duplicate_hint.top_similarity + '%');
+
+    const icsDay = await student.req('POST', '/api/notice/preview', {
+      notice: dupParse.data, remind_minutes: 1440,
+    });
+    check('CM-FR-107 自定义提前提醒写入 .ics', String(icsDay.data.ics).includes('TRIGGER:-P1D'));
+    const icsNone = await student.req('POST', '/api/notice/preview', {
+      notice: dupParse.data, remind_minutes: 0,
+    });
+    check('提醒设为 0 时不生成 VALARM', !String(icsNone.data.ics).includes('VALARM'));
+
+    const revisedText = extractor.SAMPLES[0].text.replace('A301', 'B205');
+    const preview = await student.req('POST', '/api/notice/revise', { id: savedId, text: revisedText });
+    check('CM-FR-110 版本比对先预览、不直接落库',
+      preview.status === 200 && preview.data.applied === false &&
+      Array.isArray(preview.data.changes) && preview.data.changes.length > 0,
+      preview.data.changes.length + ' 处字段变化');
+    const applied = await student.req('POST', '/api/notice/revise', {
+      id: savedId, text: revisedText, apply: true,
+    });
+    check('CM-FR-110 人工确认后写入 v2 并保留历史快照',
+      applied.data.applied === true && applied.data.notice.version === 2 &&
+      applied.data.notice.history.length === 1);
+
+    const fb2 = await student.req('POST', '/api/feedback/add', {
+      role: '大二学生', module: '通知提取', score: 5,
+      task_done: '导入并人工审核了一条通知', problem: '希望尽快支持 Word 导入', reuse: '愿意',
+    });
+    check('反馈字段对齐 8 份问卷（实际任务 / 问题 / 再用意愿）',
+      !!fb2.data.task_done && !!fb2.data.problem && fb2.data.reuse === '愿意');
+    const prog = await student.req('GET', '/api/feedback/progress');
+    check('收集进度对所有登录用户可见（只有数量）',
+      prog.status === 200 && prog.data.collected === 2 && prog.data.target === 8 &&
+      !('items' in prog.data));
+    const fbAdmin = await admin.req('GET', '/api/admin/feedback');
+    check('管理端可查看反馈明细', fbAdmin.status === 200 && fbAdmin.data.items.length === 2 &&
+      fbAdmin.data.items.some((f) => f.task_done));
+
+    const au = await admin.req('GET', '/api/admin/audit');
+    check('CM-FR-210 业务审计真实记录且不含原文 / 姓名',
+      au.status === 200 && au.data.items.length > 0 &&
+      au.data.items.every((x) => !('raw_text' in x) && !('owner_name' in x) &&
+        !('text' in x) && !('title' in x)), au.data.items.length + ' 条');
+
+    const snap = await admin.req('GET', '/api/admin/backup');
+    check('4.3 业务数据备份快照含 checksum 与数据集',
+      snap.status === 200 && snap.data.format === 'campusdesk-backup' &&
+      /^[a-f0-9]{64}$/.test(snap.data.checksum || '') && !!snap.data.datasets.notices);
+    const verify = await admin.req('POST', '/api/admin/backup/verify', { backup: snap.data });
+    check('备份完整性校验通过（SHA256 重算）', verify.status === 200 && verify.data.ok === true);
+    const tampered = await admin.req('POST', '/api/admin/backup/verify', {
+      backup: { ...snap.data, checksum: '0'.repeat(64) },
+    });
+    check('被篡改的备份校验不通过且不写入数据',
+      tampered.status === 200 && tampered.data.ok === false && tampered.data.checksum_matched === false);
+    const noConfirm = await admin.req('POST', '/api/admin/backup/restore', { backup: snap.data });
+    check('恢复必须显式确认', noConfirm.status === 400 && noConfirm.data.error === 'RESTORE_NOT_CONFIRMED');
+    const restore = await admin.req('POST', '/api/admin/backup/restore', {
+      backup: snap.data, confirm: 'RESTORE',
+    });
+    check('确认后恢复业务数据（不动账号与会话）', restore.status === 200 && restore.data.ok === true);
+
+    const csrf = await anon.req('POST', '/api/auth/login', {
+      username: 'smoke_admin', password: 'Admin2026x',
+    }, { headers: { Origin: 'http://evil.example' } });
+    check('跨站 Origin 写请求被 CSRF 校验拦截',
+      csrf.status === 403 && csrf.data.error === 'CSRF_ORIGIN_MISMATCH');
 
     /* ---------- 三套独立入口、页面级越权与旧链接兼容 ---------- */
     const manual = { redirect: 'manual' };
@@ -303,15 +406,17 @@ async function main() {
     check('入口脚本资源可访问', portalJs.status === 200);
 
     const uPage = await student.req('GET', '/user/index.html', undefined, manual);
-    check('用户端 v6 八大视图与企业级组件齐备',
-      ['view-dashboard', 'view-notice', 'view-equipment', 'view-mistake', 'view-assistant', 'view-activity', 'view-feedback', 'view-about']
+    check('用户端八大视图与 v6.1 新组件齐备',
+      ['view-dashboard', 'view-notice', 'view-equipment', 'view-mistake', 'view-assistant', 'view-activity', 'view-feedback', 'view-about',
+        'notice-file', 'import-info', 'revise-notice', 'revise-text', 'btn-revise-preview',
+        'fb-task', 'fb-problem', 'fb-reuse', 'sys-strip']
         .every((id) => String(uPage.data).includes('id="' + id + '"')) &&
-      String(uPage.data).includes('id="sys-strip"') && String(uPage.data).includes('CM-FR-001'));
+      String(uPage.data).includes('CM-FR-001'));
     const aPage = await admin.req('GET', '/admin/index.html', undefined, manual);
-    check('管理端 v6 七大视图与监控组件齐备',
-      ['view-live', 'view-health', 'view-analytics', 'view-users', 'view-data', 'view-backup', 'view-about']
-        .every((id) => String(aPage.data).includes('id="' + id + '"')) &&
-      String(aPage.data).includes('id="health-checks"') && String(aPage.data).includes('id="perm-matrix"'));
+    check('管理端八大视图与 v6.1 新组件齐备',
+      ['view-live', 'view-health', 'view-analytics', 'view-users', 'view-data', 'view-feedback', 'view-backup', 'view-about',
+        'btn-backup-export', 'backup-file', 'backup-verify', 'audit-table', 'fb-slots', 'health-checks', 'perm-matrix']
+        .every((id) => String(aPage.data).includes('id="' + id + '"')));
 
     const uIdxAnon = await anon.req('GET', '/user/index.html', undefined, manual);
     check('未登录访问用户工作台→本端登录页',
@@ -370,7 +475,7 @@ async function main() {
     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
     check('按天读取日志', day.data.rows.length > 0);
     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.0.0');
+    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.1.0');
     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
     const overview = await admin.req('GET', '/api/admin/overview');
@@ -409,6 +514,10 @@ async function main() {
     });
     check('管理端入口可正常登录', adminAtAdmin.status === 200);
 
+    check('全程未向真实日志写入任何 smoke 记录',
+      telemetry.readDay(telemetry.localDay()).every((r) => r.source !== 'smoke'),
+      '主日志 ' + mainLogBefore + ' → ' + telemetry.readDay(telemetry.localDay()).length + ' 行（并发访问不计入断言）');
+
     sse.cancel(); ctrl.abort();
     const pass = results.filter((r) => r.ok).length;
     console.log('\n结果：' + pass + '/' + results.length + ' 项通过');
@@ -420,6 +529,9 @@ async function main() {
     // 只清理本脚本创建的隔离数据目录，绝不触碰日常 data/*.json
     if (SMOKE_DIR.endsWith('__smoke__') && fs.existsSync(SMOKE_DIR)) {
       fs.rmSync(SMOKE_DIR, { recursive: true, force: true });
+    }
+    if (SMOKE_LOG_DIR.endsWith('__smoke__') && fs.existsSync(SMOKE_LOG_DIR)) {
+      fs.rmSync(SMOKE_LOG_DIR, { recursive: true, force: true });
     }
   }
 }

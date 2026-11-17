@@ -43,6 +43,7 @@
       <div class="nav-label">系统管理 · SRS 2.4 / 4.3</div>
       <button class="nav-item" data-view="users"><svg><use href="#i-users"/></svg>账号与角色<span class="nav-badge" id="badge-users">0</span></button>
       <button class="nav-item" data-view="data"><svg><use href="#i-db"/></svg>数据总览</button>
+      <button class="nav-item" data-view="feedback"><svg><use href="#i-heart"/></svg>反馈收集<span class="nav-badge" id="badge-feedback">0</span></button>
       <button class="nav-item" data-view="backup"><svg><use href="#i-archive"/></svg>备份与导出</button>
 
       <div class="nav-divider"></div>
@@ -140,7 +141,7 @@
             <div id="health-meta"></div>
           </div>
         </div>
-        <div class="band band-info" style="margin-top:16px"><svg><use href="#i-info"/></svg><div><b>关于「连续运行 ≥ 7 天」</b><span>检查项按 process_logs/ 中真实存在的日期文件计数，不预置、不补造历史日志。每天实际使用并运行 <code>node scripts/daily-report.js --sync</code> 即可自然累积。</span></div></div>
+        <div class="band band-info" style="margin-top:16px"><svg><use href="#i-info"/></svg><div><b>关于「连续运行 ≥ 7 天」</b><span>检查项按「当前连续天数」而非「累计天数」判定：断一天就重新计数，日报里会列出断档明细与达标日期。日志不预置、不补造；每天实际使用并运行 <code>node scripts/daily-report.js --sync</code> 即可自然累积。</span></div></div>
       </section>
 
       <!-- ============ 日志分析 ============ -->
@@ -221,10 +222,34 @@
           </div>
         </div>
         <div class="card" style="margin-top:16px">
+          <div class="card-head"><div><h3>业务审计记录 · CM-FR-210</h3><div class="card-sub">只记谁、何时、做了什么、作用于哪个对象；不含原文、姓名与题目</div></div><span class="chip" id="audit-count">0 条</span></div>
+          <div id="audit-table"></div>
+        </div>
+        <div class="card" style="margin-top:16px">
           <div class="card-head"><h3>每日同步</h3></div>
           <pre class="codeblock">node scripts/daily-report.js --sync   # 生成当日日报并 git commit
 git push                              # 需要提交到 GitHub 时再执行</pre>
           <p class="about-p">运行日志由程序自动采集，属于系统运行痕迹，不是「预置业务数据」；业务数据（通知、器材、借还、错题、反馈、账号）全部为空，等待使用者录入。</p>
+        </div>
+      </section>
+
+      <!-- ============ 反馈收集 · 验收 8.4 ============ -->
+      <section class="view" id="view-feedback">
+        <div class="section-intro"><div class="eyebrow">验收指标 8.4 · 8 位真实用户</div><h2>反馈收集</h2><p>反馈必须由真实使用者填写，系统不代填、不生成示例评价。这里只汇总本机已提交的内容。</p></div>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="kpi-label">已收集反馈</div><div class="kpi-num" id="fb-kpi">0</div><div class="kpi-foot">目标 8 位真实使用者</div></div>
+          <div class="kpi"><div class="kpi-label">平均好用程度</div><div class="kpi-num" id="fb-score-avg">—</div><div class="kpi-foot">1–5 分，来自真实打分</div></div>
+          <div class="kpi"><div class="kpi-label">愿意再次使用</div><div class="kpi-num" id="fb-reuse-count">0</div><div class="kpi-foot">明确选择「愿意」的人数</div></div>
+          <div class="kpi"><div class="kpi-label">记录到的问题</div><div class="kpi-num" id="fb-problem-count">0</div><div class="kpi-foot">用于驱动后续迭代</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h3>收集进度</h3><div class="card-sub">8 个槽位，每填满一格代表一位同学提交</div></div><span class="chip accent" id="fb-progress-chip">0 / 8</span></div>
+          <div class="progress"><div id="fb-progress-fill"></div></div>
+          <div id="fb-slots" class="fb-slots"></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><div><h3>反馈明细</h3><div class="card-sub">业务数据仅本机可见，不写入脱敏运行日志</div></div><button class="btn btn-soft btn-sm" id="fb-refresh"><svg><use href="#i-refresh"/></svg>刷新</button></div>
+          <div id="fb-table"></div>
         </div>
       </section>
 
@@ -245,16 +270,18 @@ git push                              # 需要提交到 GitHub 时再执行</pre
             <div class="admin-note" id="export-note">导出内容为脱敏运行日志，不含通知原文、姓名、学号、题目或反馈正文。</div>
           </div>
           <div class="card">
-            <div class="card-head"><div><h3>数据备份 · 4.3</h3><div class="card-sub">业务数据由使用者录入，备份动作由你在本机执行</div></div></div>
+            <div class="card-head"><div><h3>业务数据备份 · 4.3</h3><div class="card-sub">导出带 SHA256 的快照；校验与恢复都由你显式触发</div></div><span class="chip good">可用</span></div>
             <div id="backup-datasets"></div>
-            <div class="card-head mt"><h3>备份命令</h3></div>
-            <pre class="codeblock"># Windows PowerShell（在项目根目录执行）
-$stamp = Get-Date -Format yyyyMMdd-HHmm
-Copy-Item -Path data -Destination ".workbuddy/backups/data-$stamp" -Recurse
-
-# 校验备份完整性：逐文件对比条数
-node scripts/reset-password.js   # 可查看账号是否完整</pre>
-            <div class="band band-warn"><svg><use href="#i-info"/></svg><div><b>为什么页面不提供「一键备份」按钮</b><span>写入备份目录会改变磁盘上的数据副本；按「一切数据由我添加」的约定，这类副作用由你显式执行，页面只提供命令与当前条数核对。</span></div></div>
+            <div class="head-actions" style="margin-top:14px">
+              <button class="btn btn-primary" id="btn-backup-export"><svg><use href="#i-download"/></svg>导出快照</button>
+              <label class="file-btn" for="backup-file">选择备份文件</label>
+              <input type="file" id="backup-file" class="sr-file" accept=".json,application/json">
+            </div>
+            <div class="card-head mt"><h3>完整性校验</h3></div>
+            <div id="backup-verify" class="verify-box">选择一份之前导出的备份 JSON，先校验 checksum 与各数据集条数；校验本身不写入任何数据。</div>
+            <label class="review-check" style="margin-top:12px"><input type="checkbox" id="backup-confirm"><span>我确认要用这份备份覆盖当前业务数据（账号与会话不会变动）</span></label>
+            <button class="btn btn-danger full hidden" id="btn-backup-restore">确认恢复业务数据</button>
+            <div class="band band-info" style="margin-top:14px"><svg><use href="#i-info"/></svg><div><b>边界</b><span>恢复只覆盖通知、器材、借还、错题、反馈五类业务数据；审计记录保留、账号与会话不动。只有勾选确认并点击恢复才会写入，其余操作都是只读。</span></div></div>
           </div>
         </div>
         <div class="card" style="margin-top:16px">
@@ -277,7 +304,7 @@ node scripts/reset-password.js   # 可查看账号是否完整</pre>
             <tr><td>查看系统运行状态</td><td><span class="st st-ok">已实现</span></td><td>系统健康页：6 项检查 + 实时内存与运行时长</td></tr>
             <tr><td>查看错误日志</td><td><span class="st st-ok">已实现</span></td><td>SSE 实时流 + 错误码聚合 + 最近报错列表</td></tr>
             <tr><td>管理软件版本</td><td><span class="st st-ok">已实现</span></td><td>版本时间线 + 日志 app_version 字段</td></tr>
-            <tr><td>管理数据备份</td><td><span class="st st-part">部分实现</span></td><td>条数核对 + 导出 + 可执行备份命令；自动备份与完整性校验待接入</td></tr>
+            <tr><td>管理数据备份</td><td><span class="st st-ok">已实现</span></td><td>带 SHA256 的快照导出、完整性校验、显式确认后恢复；自动定时备份仍规划中</td></tr>
             <tr><td>管理 AI 模型</td><td><span class="st st-plan">规划中</span></td><td>当前为纯本地规则引擎，无模型服务，故不提供空壳开关</td></tr>
           </tbody></table></div>
         </div>

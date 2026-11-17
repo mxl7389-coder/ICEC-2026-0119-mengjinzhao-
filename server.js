@@ -44,6 +44,13 @@ function send(res, status, body, headers = {}) {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'same-origin',
+    // 页面无外部资源、无内联脚本；style 允许 inline 属性（组件里有行内宽度）。
+    // 不设 X-Frame-Options / frame-ancestors：本地预览面板以内嵌方式展示页面，
+    // 而点击劫持对本机工具不构成实际威胁，跨站写请求由下面的同源校验兜底。
+    'Content-Security-Policy': "default-src 'self' blob:; script-src 'self'; " +
+      "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
+      "object-src 'none'; base-uri 'self'; form-action 'self'",
     ...headers,
   });
   res.end(payload);
@@ -143,6 +150,19 @@ function readBody(req) {
     });
     req.on('error', reject);
   });
+}
+
+/**
+ * CSRF 同源校验：跨站页面无法伪造本地服务的写请求。
+ * 无 Origin / Referer 时放行（本机 curl 与冒烟测试不发送该头，
+ * 且 Cookie 已设 SameSite=Lax，浏览器跨站 POST 不会携带本会话）。
+ */
+function sameOrigin(req) {
+  const raw = req.headers.origin || req.headers.referer || '';
+  if (!raw) return true;
+  try {
+    return new URL(raw).host.toLowerCase() === String(req.headers.host || '').toLowerCase();
+  } catch (_) { return false; }
 }
 
 function anonSession(req, user) {
@@ -245,6 +265,13 @@ const server = http.createServer(async (req, res) => {
       if (!user) { res.on('finish', finish); return send(res, 401, { error: 'UNAUTHORIZED', message: '请先登录' }); }
       if (user.role !== 'admin') { res.on('finish', finish); return send(res, 403, { error: 'FORBIDDEN', message: '需要管理员权限' }); }
       return handleLogStream(req, res, user, session);
+    }
+
+    if (['POST', 'PUT', 'DELETE'].includes(req.method) && !sameOrigin(req)) {
+      errorCode = 'CSRF_ORIGIN_MISMATCH';
+      statusCode = 403;
+      res.on('finish', finish);
+      return send(res, 403, { error: errorCode, message: '请求来源与本站不一致，已拒绝' });
     }
 
     const body = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE'

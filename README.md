@@ -52,7 +52,7 @@
 - 不预置器材、通知、错题、样例文本或反馈：`data/*.json` 初始全部为 `[]`，界面显示明确的空状态与下一步指引。
 - `lib/api.js` 中已彻底移除 `seedEquipment()` 与自动播种逻辑；`bootstrap` 不再下发示例通知。
 - `process_logs/` 里的日志是**程序自动采集的运行痕迹**（每次真实请求一行），不是业务数据，也不是补造的历史记录。
-- 冒烟测试只在 `data/__smoke__/` 隔离目录里造测试账号与记录，跑完即删除，不会污染日常数据。
+- 冒烟测试只在 `data/__smoke__/`（业务数据）与 `process_logs/__smoke__/`（运行日志）两个隔离目录里造测试账号、记录与调用日志，跑完即删除，不会污染日常数据或真实 telemetry。
 
 ---
 
@@ -69,7 +69,7 @@ node server.js
 **第一次打开**：封面页 → 点「管理员 · 进入管理后台」→ 管理端登录页显示「创建管理员账号」，填好显示名称、账号、密码后自动进入后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者从 `/user/` 登录后自行录入数据。**系统当前账号已按你的要求清空，正处于这个「重新注册」状态。**
 
 ```bash
-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，89 项断言
+node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录 + 隔离日志目录，115 项断言
 node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
 git push                      # 需要提交到 GitHub 时再执行
 ```
@@ -85,7 +85,7 @@ git push                      # 需要提交到 GitHub 时再执行
 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
 
 ```json
-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.1.0","source":"live","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
 ```
 
 - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
@@ -94,8 +94,10 @@ git push                      # 需要提交到 GitHub 时再执行
 - **脱敏**：不写通知原文、姓名、学号、题目、反馈正文、账号或密码；`meta` 只留长度、条数、命中规则数等可统计特征，并有字段名黑名单兜底；`session` 为不可逆哈希。
 - **实时**：管理员后台的 SSE 流无需刷新，新请求落盘即推送。
 - **每日同步**：`node scripts/daily-report.js --sync` 生成 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git add process_logs/` + `commit`（业务数据按 `.gitignore` 不入库）。
+- **连续天数自检**：日报新增「连续运行达标自检」章节，按**当前连续天数**（不是累计天数）判定，列出断档明细、历史最长连续和达标日期；系统健康页、总览看板同步显示。
+- **来源隔离（v6.1）**：日志新增 `source` 字段；冒烟测试通过 `CAMPUSDESK_LOG_DIR` 写入 `process_logs/__smoke__/`，跑完即删，**不再把测试调用与故意触发的报错混进真实日志**。v6.1 之前的历史记录无该字段，日报标为 `legacy` 并说明其错误率含测试噪声。
 
-> ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。每天用一次、睡前跑一次 `--sync`，7 天后目录里自然就是 7 个日期文件。
+> ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。**当前实际状态：累计 5 天（11-11、12、13、16、17），11-14/15 断档，当前连续仅 2 天**；从 11-16 起需连续使用到 **11-22** 才达标。每天用一次、睡前跑一次 `--sync`。
 
 ### ② 基于日志的 ≥3 次 Git 迭代 Diff（20 分）
 
@@ -103,13 +105,15 @@ git push                      # 需要提交到 GitHub 时再执行
 
 ### ③ 完整源码 + 8 位真实用户反馈（15 分）
 
-源码全部在本仓库。反馈通过工作台「使用反馈」表单收集，也可以线下用 [`docs/用户反馈表.md`](docs/用户反馈表.md) 的 8 份空白模板收集后录入。
+源码全部在本仓库。反馈通过工作台「使用反馈」表单收集（v6.1 起字段与 8 份问卷完全对齐：实际完成的任务、评分、最有帮助的地方、遇到的问题、建议、是否愿意再用），管理端「反馈收集」页显示 `已收 N/8` 槽位与明细；也可以线下用 [`docs/用户反馈表.md`](docs/用户反馈表.md) 的 8 份空白模板收集后录入。**当前已收集 0 份。**
 
 > ⚠️ **诚实说明**：8 份反馈必须由 8 位真实同学试用后亲自填写，系统不生成任何虚构评价，`data/feedback.json` 初始为空。
 
 ---
 
 ## Git 迭代记录
+
+> 以下各章节中出现的「50 / 73 / 89 项断言」及 `v4.0.1` / `v5` / `v6.0.0` 等版本号，均为**当时版本的历史记录**，保留原样便于对照 `git diff`；当前版本为 **v6.1.0**，冒烟测试为 **115/115 通过**。
 
 ### v1 · 基础可运行版
 - 零依赖 HTTP 服务 + 静态资源 + 统一错误处理
@@ -188,7 +192,41 @@ git push                      # 需要提交到 GitHub 时再执行
 
 **复测**：`node scripts/smoke-test.js` **89/89 通过**；12 个 JS 语法检查通过；用户端 89 / 管理端 65 个静态 DOM 引用全部核对存在（3 个 `review-*` 为审核区动态生成）。日志 `app_version` 升到 `v6.0.0`。
 
-> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、独立审计表、AI 模型管理均在「功能地图」中标注为规划中。
+> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、异常登记、AI 模型管理仍在「功能地图」标注为规划中；**操作审计已于 v6.1 落地**。
+
+### v6.1 · 验收数据可信度修复 + SRS 功能补齐
+
+**起因**：一次只读体检发现四个会影响评分的问题 —— 日志 11-14/15 断档、无 GitHub 远端、8 位反馈 0 份、**冒烟测试日志混进真实 `process_logs/`**（累计 739 次调用中 102 次 error 多为测试故意触发）。本轮只解决能用代码解决的部分。
+
+| 改动 | 文件 | 真实效果 |
+| --- | --- | --- |
+| 测试日志隔离 + `source` 字段 | `lib/telemetry.js`、`scripts/smoke-test.js` | 测试写 `process_logs/__smoke__/` 并跑完删除；断言「全程未向真实日志写入 smoke 记录」通过，主日志行数测试前后不变 |
+| 连续天数自检 | `lib/telemetry.js` `streakInfo()`、`scripts/daily-report.js` | 日报列出当前连续 / 历史最长 / 断档明细 / 达标日期；系统健康页按连续而非累计判定；日报标注「生成时刻 + 截至行数」，说明是静态快照 |
+| CM-FR-101 五种导入 | `public/user/index.html`、`app.js` | 手动粘贴 + `.txt` / `.md` / `.csv` / `.json`，浏览器 FileReader 本地解析、可拖放、不需要任何库；PDF/Word/图片仍如实标规划中 |
+| CM-FR-109 / 110 / 107 | `lib/api.js`、用户端 | 3-gram Jaccard 查重（只给相似度，不泄露他人原文）、版本快照与字段差异「先预览再确认」、自定义提前提醒写入 `.ics` 的 `VALARM` |
+| 反馈与收集进度 | 用户端 / 管理端 / `lib/api.js` | 表单对齐 8 份问卷字段；任何登录用户可见 `已收 N/8`，管理端「反馈收集」页含 8 槽位与明细 |
+| CM-FR-210 审计 + 备份 | `lib/store.js`、`lib/api.js`、管理端 | 新增空的 `audit` 数据集，写操作自动留脱敏痕迹；业务快照导出带 SHA256，可校验、可显式确认后恢复（不动账号与会话） |
+| 安全加固 | `server.js` | CSP 脚本白名单、`Referrer-Policy: same-origin`、`nosniff`；写请求校验 `Origin`/`Referer` 同源，跨站提交返回 `CSRF_ORIGIN_MISMATCH`（本地场景不启用 frame 限制，避免破坏预览面板） |
+| 交付物对照 | `docs/交付物对照.md` | SRS 第 10 章交付清单逐项状态、验收指标对照、架构说明与 JSON→SQLite 表映射 |
+
+**复测**：`node scripts/smoke-test.js` **115/115 通过**（新增 26 项），12 个 JS 语法检查通过，用户端 100 / 管理端 82 个 DOM 引用核对（4 个 `review-*` 为审核区动态生成）。版本 `v6.1.0`。**未做**：SQLite 迁移（会引入依赖、破坏零依赖即跑，建议阶段验收后再动）、GitHub 远端（需要你的账号，见下方）。
+
+---
+
+## 推送到 GitHub（需要你本人操作）
+
+目前 10+ 个提交都在本地 `master`，`git remote -v` 为空，**作业要求的 GitHub 过程数据还交不出来**。步骤：
+
+```bash
+# 1. 在 GitHub 网页新建一个空仓库（不要勾选 README/license，避免冲突），复制其 URL
+git remote add origin https://github.com/<你的用户名>/<仓库名>.git
+git branch -M main                 # 可选，GitHub 默认分支名
+git push -u origin main           # 或 master
+# 2. 之后每天同步
+node scripts/daily-report.js --sync && git push
+```
+
+`.gitignore` 已排除 `data/`（账号、密码哈希与业务数据都不会上传）；提交的是源码、README、文档与 `process_logs/`。若启用双重认证，请用 Personal Access Token 代替密码。
 
 ---
 
@@ -223,12 +261,13 @@ public/admin/login.html  管理端独立登录页（深墨蓝）+ 首次初始�
 public/admin/index.html  管理员实时日志后台
 public/admin/admin.js    管理端交互
 public/style.css         工作台 / 后台设计系统 + 书院气质装饰层
-scripts/smoke-test.js    89 项冒烟测试（隔离数据目录）
-scripts/daily-report.js  每日日志汇总 + 一键 git 同步
+scripts/smoke-test.js    115 项冒烟测试（隔离数据目录 + 隔离日志目录）
+scripts/daily-report.js  每日日志汇总 + 连续天数自检 + 一键 git 同步
 scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
-data/                    业务数据，全部由使用者录入
-process_logs/            每日 telemetry + 日报
+data/                    业务数据 + 空的审计数据集，全部由使用者录入
+process_logs/            每日 telemetry + 日报（测试日志在 __smoke__/，跑完即删）
 docs/使用说明.md         首次使用与日常操作步骤
+docs/交付物对照.md        SRS 交付物清单 / 验收指标 / 架构与数据映射
 docs/用户反馈表.md        8 份真实反馈空白模板
 ```
 
@@ -238,7 +277,7 @@ docs/用户反馈表.md        8 份真实反馈空白模板
 | --- | --- |
 | 启动网站 | `node server.js` |
 | 指定端口 | `PORT=8080 node server.js` |
-| 跑接口测试 | `node scripts/smoke-test.js` |
+| 跑接口测试（不污染真实日志） | `node scripts/smoke-test.js` |
 | 列出已注册账号 | `node scripts/reset-password.js` |
 | 重置某账号密码 | `node scripts/reset-password.js --reset 账号` |
 | 生成今日日报 | `node scripts/daily-report.js` |

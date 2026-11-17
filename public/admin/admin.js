@@ -12,14 +12,16 @@ const S = {
   cursor: 0, paused: false, live: false, pollTimer: null, es: null,
   stats: { total: 0, errors: 0 },
   dayRows: [], selectedDay: '',
+  feedback: [], audit: [], backup: null,
 };
 const TITLES = {
   live: ['实时运行日志', '服务端每次调用自动写入的脱敏记录，通过 SSE 实时推送', '运行监控'],
   health: ['系统健康', 'CM-FR-509 健康检查清单与实时资源占用', '运行监控'],
   analytics: ['日志分析', '按模块、动作、错误码、角色、自然日聚合，驱动真实迭代', '运行监控'],
   users: ['账号与角色', '所有账号由使用者创建，系统不预置任何账号', '系统管理'],
-  data: ['数据总览', '只看条数与服务信息，不展示业务内容', '系统管理'],
-  backup: ['备份与导出', 'CM-FR-507 日志导出与本机数据备份命令', '系统管理'],
+  data: ['数据总览', '条数、服务信息与脱敏业务审计记录', '系统管理'],
+  feedback: ['反馈收集', '8 位真实使用者的反馈与收集进度', '系统管理'],
+  backup: ['备份与导出', '日志导出、业务快照 SHA256 校验与按需恢复', '系统管理'],
   about: ['版本与规划', '真实 Git 迭代记录与 SRS 管理员职责对照', '版本'],
 };
 
@@ -302,11 +304,69 @@ function renderPermMatrix() {
     ['访问实时日志与管理接口', false, false, true, '服务端二次校验'],
     ['创建账号 / 停用 / 重置密码', false, false, true, '仅管理端入口'],
     ['导出脱敏运行日志', false, false, true, 'CM-FR-507'],
+    ['查看反馈明细与业务审计', false, false, true, '验收 8.4 / CM-FR-210'],
+    ['导出、校验并恢复数据备份', false, false, true, '需显式确认，账号会话不动'],
   ];
   const mark = (v) => v ? '<span class="tag tag-ok">允许</span>' : '<span class="tag tag-gray">—</span>';
   $('#perm-matrix').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr><th>能力</th><th>学生</th><th>教师</th><th>管理员</th><th>说明</th></tr></thead><tbody>' +
     rows.map((r) => '<tr><td>' + esc(r[0]) + '</td><td>' + mark(r[1]) + '</td><td>' + mark(r[2]) + '</td><td>' + mark(r[3]) + '</td><td class="muted">' + esc(r[4]) + '</td></tr>').join('') +
     '</tbody></table></div><div class="admin-note">矩阵与 <code>lib/api.js</code> 的 PERMISSIONS 配置一致；管理员为通配权限，但同样受入口 portal 约束。</div>';
+}
+
+/* ------------------------------ 反馈收集 / 业务审计 ------------------------------ */
+async function refreshFeedback() {
+  const r = await api('admin/feedback');
+  S.feedback = r.items || [];
+  renderFeedback();
+}
+function renderFeedback() {
+  const items = S.feedback || [], n = items.length;
+  $('#fb-kpi').textContent = n;
+  $('#badge-feedback').textContent = n;
+  $('#fb-score-avg').textContent = n
+    ? (items.reduce((s, f) => s + (Number(f.score) || 0), 0) / n).toFixed(1) : '—';
+  $('#fb-reuse-count').textContent = items.filter((f) => f.reuse === '愿意').length;
+  $('#fb-problem-count').textContent = items.filter((f) => String(f.problem || '').trim()).length;
+  $('#fb-progress-chip').textContent = n + ' / 8';
+  $('#fb-progress-fill').style.width = Math.min(100, n / 8 * 100) + '%';
+  $('#fb-slots').innerHTML = Array.from({ length: 8 }, (_, i) =>
+    '<span class="fb-slot' + (i < n ? ' on' : '') + '">' +
+    (i < n ? '✓' : String(i + 1).padStart(2, '0')) + '</span>').join('');
+  if (!n) {
+    $('#fb-table').innerHTML = '<div class="empty-v2"><div class="empty-icon"><svg><use href="#i-heart"/></svg></div>' +
+      '<b>还没有收到反馈</b><span>让同学从用户端「使用反馈」实际试用后自行填写；系统不会代填</span></div>';
+    return;
+  }
+  $('#fb-table').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr>' +
+    '<th>#</th><th>身份</th><th>模块</th><th>实际完成的任务</th><th>评分</th><th>遇到的问题</th>' +
+    '<th>建议</th><th>再用意愿</th><th>时间</th></tr></thead><tbody>' +
+    items.map((f, i) => '<tr><td class="num">' + String(i + 1).padStart(2, '0') + '</td>' +
+      '<td>' + esc(f.role) + '</td><td>' + esc(f.module) + '</td>' +
+      '<td>' + esc(f.task_done || '—') + '</td><td class="num">' + (f.score || '—') + '</td>' +
+      '<td>' + esc(f.problem || '—') + '</td><td>' + esc(f.suggestion || '—') + '</td>' +
+      '<td>' + esc(f.reuse || '—') + '</td>' +
+      '<td class="nowrap">' + esc(String(f.created_at).slice(0, 16).replace('T', ' ')) + '</td></tr>').join('') +
+    '</tbody></table></div>';
+}
+async function refreshAudit() {
+  const r = await api('admin/audit');
+  S.audit = r.items || [];
+  renderAudit();
+}
+function renderAudit() {
+  const rows = S.audit || [];
+  $('#audit-count').textContent = rows.length + ' 条';
+  if (!rows.length) {
+    $('#audit-table').innerHTML = '<div class="table-empty"><b>暂无审计记录</b><br>任意一次业务写操作（保存通知、借还、归档、反馈等）都会自动留痕</div>';
+    return;
+  }
+  $('#audit-table').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr>' +
+    '<th>时间</th><th>角色</th><th>动作</th><th>对象类型</th><th>对象 ID</th></tr></thead><tbody>' +
+    rows.map((r) => '<tr><td class="nowrap">' + esc(String(r.at).slice(0, 19).replace('T', ' ')) + '</td>' +
+      '<td><span class="tag tag-gray">' + esc(ROLE_LABEL[r.actor_role] || r.actor_role || '—') + '</span></td>' +
+      '<td><code>' + esc(r.action) + '</code></td><td>' + esc(r.target_type) + '</td>' +
+      '<td class="muted">' + esc(r.target_id || '—') + '</td></tr>').join('') +
+    '</tbody></table></div>';
 }
 
 /* ------------------------------ 数据与备份 ------------------------------ */
@@ -372,6 +432,7 @@ async function refreshUsers() { const r = await api('admin/users'); S.users = r.
 async function refreshOverview() {
   S.overview = await api('admin/overview');
   renderOverview(); renderHealth(); renderPermMatrix();
+  try { await refreshAudit(); } catch (_) {}
 }
 async function refreshDay(date) {
   S.selectedDay = date;
@@ -388,7 +449,13 @@ function switchView(name) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (name === 'analytics') guard(refreshSummary)();
   if (name === 'users') guard(refreshUsers)();
+  if (name === 'feedback') guard(refreshFeedback)();
   if (name === 'data' || name === 'backup' || name === 'health' || name === 'about') guard(refreshOverview)();
+}
+function setVerifyBox(title, detail, ok) {
+  const el = $('#backup-verify');
+  el.className = 'verify-box' + (ok === null ? '' : (ok ? ' ok' : ' bad'));
+  el.innerHTML = '<b>' + esc(title) + '</b>' + detail;
 }
 function exportLogs(format) {
   const day = $('#export-day').value || S.selectedDay || S.allDays[S.allDays.length - 1] || '';
@@ -437,6 +504,60 @@ function bindEvents() {
   $('#btn-export-json').addEventListener('click', () => exportLogs('json'));
   $('#btn-export-csv').addEventListener('click', () => exportLogs('csv'));
 
+  /* 业务数据备份：导出 → 校验 → 显式确认后恢复 */
+  $('#btn-backup-export').addEventListener('click', () => {
+    window.location.href = '/api/admin/backup';
+    toast('正在导出业务数据快照（含 SHA256 校验值）');
+  });
+  $('#backup-file').addEventListener('change', guard(async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (f.size > 20 * 1024 * 1024) {
+      setVerifyBox('文件过大', '超过 20 MB，已拒绝解析。', false);
+      S.backup = null; $('#btn-backup-restore').classList.add('hidden'); return;
+    }
+    let obj;
+    try { obj = JSON.parse(await f.text()); }
+    catch (err) {
+      setVerifyBox('无法解析备份文件', esc(err.message), false);
+      S.backup = null; $('#btn-backup-restore').classList.add('hidden'); return;
+    }
+    S.backup = obj;
+    try {
+      const r = await api('admin/backup/verify', { method: 'POST', body: { backup: obj } });
+      if (r.ok) {
+        const counts = Object.entries(r.datasets || {}).map(([k, v]) => k + ':' + v).join(' · ');
+        setVerifyBox('校验通过 · 可以恢复',
+          'SHA256 匹配，导出于 ' + esc(r.exported_at || '—') + '。<br><code>' +
+          esc(r.computed_checksum) + '</code><br>数据集条数：' + esc(counts), true);
+        $('#btn-backup-restore').classList.remove('hidden');
+      } else {
+        setVerifyBox('校验未通过 · 已禁止恢复', esc((r.problems || []).join('；')), false);
+        $('#btn-backup-restore').classList.add('hidden');
+      }
+    } catch (err) {
+      setVerifyBox('校验请求失败', esc(err.message), false);
+      $('#btn-backup-restore').classList.add('hidden');
+    }
+    $('#backup-confirm').checked = false;
+  }));
+  $('#btn-backup-restore').addEventListener('click', guard(async () => {
+    if (!$('#backup-confirm').checked) { toast('请先勾选恢复确认', true); return; }
+    if (!S.backup) { toast('请先选择并校验一份备份文件', true); return; }
+    const r = await api('admin/backup/restore', {
+      method: 'POST', body: { backup: S.backup, confirm: 'RESTORE' },
+    });
+    toast('业务数据已恢复');
+    setVerifyBox('恢复完成', esc(r.note || ''), true);
+    $('#btn-backup-restore').classList.add('hidden');
+    $('#backup-confirm').checked = false;
+    await refreshOverview();
+  }));
+  $('#fb-refresh').addEventListener('click', guard(async () => {
+    await refreshFeedback(); toast('反馈已刷新');
+  }));
+
   $('#form-user').addEventListener('submit', guard(async (e) => {
     e.preventDefault();
     await api('admin/users', { method: 'POST', body: {
@@ -476,6 +597,7 @@ function bindEvents() {
   await guard(refreshSummary)();
   await guard(refreshOverview)();
   await guard(refreshUsers)();
+  await guard(refreshFeedback)();
   const day = S.allDays[S.allDays.length - 1] || (await api('health')).today;
   await guard(() => refreshDay(day))();
   connectStream();

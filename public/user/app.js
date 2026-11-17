@@ -12,6 +12,14 @@ const S = {
   notices: [], equipment: null, mistakes: [], feedback: [], activity: [],
   parsed: null, today: '', version: '', empty: true,
   filter: { text: '', category: '', state: '' },
+  importType: 'paste', feedbackProgress: 0, revise: null,
+};
+
+const IMPORT_LABEL = { paste: '手动粘贴', txt: '.txt', md: '.md', csv: '.csv', json: '.json' };
+const FIELD_LABEL = {
+  title: '标题', category: '分类', event_date: '活动日期', event_time: '时间',
+  location: '地点', deadline: '截止日期', audience: '面向对象', todos: '待办事项',
+  materials: '所需材料', issuer: '发布单位', importance: '重要程度',
 };
 
 const ICON = {
@@ -45,6 +53,8 @@ const ACTION_LABEL = {
   password: '修改密码', login: '登录', logout: '退出', equipment: '查看器材',
   notice: '查看通知', mistake: '查看错题', feedback: '查看反馈', loan: '查看借还',
   health: '健康检查', index: '打开工作台', home: '打开封面',
+  revise: '版本比对', preview: '预览日历', progress: '查看反馈进度',
+  audit: '查看审计', backup: '备份导出',
 };
 
 async function api(path, opts = {}) {
@@ -93,6 +103,68 @@ function addDays(iso, n) {
   const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
+function localISO() {
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function deadlineText(iso) {
+  const d = Math.round((Date.parse(iso + 'T00:00:00') - Date.parse(localISO() + 'T00:00:00')) / 86400000);
+  if (d < 0) return '已逾期 ' + (-d) + ' 天';
+  if (d === 0) return '今天截止';
+  if (d === 1) return '明天截止';
+  return '还剩 ' + d + ' 天';
+}
+
+/** CM-FR-101：5 种文本导入，全部在本机浏览器完成，不上传、不依赖第三方库 */
+function parseImportedText(name, raw) {
+  const ext = (String(name).split('.').pop() || '').toLowerCase();
+  const type = ext === 'csv' ? 'csv' : ext === 'json' ? 'json'
+    : (ext === 'md' || ext === 'markdown') ? 'md' : 'txt';
+  let text = raw, note = '';
+  if (type === 'json') {
+    try {
+      const obj = JSON.parse(raw);
+      if (Array.isArray(obj)) {
+        text = obj.map((x) => typeof x === 'string' ? x
+          : (x.text || x.content || x.body || x.notice || JSON.stringify(x))).join('\n');
+        note = '数组 ' + obj.length + ' 项';
+      } else if (obj && typeof obj === 'object') {
+        const picked = obj.text || obj.content || obj.body || obj.notice || obj.raw;
+        text = String(picked || raw);
+        note = picked ? '已取文本字段' : '未找到文本字段，按原始 JSON 导入';
+      }
+    } catch (_) { note = 'JSON 解析失败，按纯文本导入'; }
+  } else if (type === 'csv') {
+    text = raw.split(/\r?\n/).map((line) => line
+      .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+      .map((c) => c.replace(/^"|"$/g, '').trim()).filter(Boolean).join(' '))
+      .filter(Boolean).join('\n');
+    note = '按行合并单元格';
+  }
+  return { type, text: String(text).trim(), note };
+}
+function importFile(file) {
+  if (!file) return;
+  const ext = (String(file.name).split('.').pop() || '').toLowerCase();
+  if (!['txt', 'text', 'md', 'markdown', 'csv', 'json'].includes(ext)) {
+    toast('仅支持 .txt / .md / .csv / .json 文本格式', true); return;
+  }
+  if (file.size > 512 * 1024) { toast('文件超过 512 KB，请拆分后再导入', true); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const r = parseImportedText(file.name, String(reader.result || ''));
+    if (!r.text) { toast('文件内没有可提取的文本', true); return; }
+    $('#notice-input').value = r.text;
+    $('#notice-input').dispatchEvent(new Event('input'));
+    S.importType = r.type;
+    $('#import-info').textContent = file.name + ' · ' + (Math.round(file.size / 1024 * 10) / 10) +
+      ' KB · ' + IMPORT_LABEL[r.type] + (r.note ? ' · ' + r.note : '');
+    toast('已导入 ' + file.name + '，请核对原文后点击「结构化提取」');
+  };
+  reader.onerror = () => toast('文件读取失败', true);
+  reader.readAsText(file, 'utf-8');
+}
+
 function downloadText(filename, text, type) {
   const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -136,6 +208,7 @@ async function refreshView(name) {
       const r = await api('mistake/list'); S.mistakes = r.items; renderMistakes();
     } else if (name === 'feedback') {
       if (can('feedback.list')) { const r = await api('feedback/list'); S.feedback = r.items; }
+      try { const p = await api('feedback/progress'); S.feedbackProgress = p.collected; } catch (_) {}
       renderFeedback();
     } else if (name === 'activity') {
       const a = await api('activity?days=7'); S.activity = a.items || []; renderActivity();
@@ -186,7 +259,8 @@ function renderDashboard() {
     '<span class="sys-item">版本 <b>' + esc(sys.version) + '</b></span>' +
     '<span class="sys-item">运行 <b>' + esc(durationText(sys.uptime_s)) + '</b></span>' +
     '<span class="sys-item">内存 <b>' + sys.rss_mb + ' MB</b></span>' +
-    '<span class="sys-item">日志 <b>' + sys.log_days + ' / 7 天</b></span>' +
+    '<span class="sys-item">日志 <b>' + sys.log_days + ' 天</b></span>' +
+    '<span class="sys-item">连续 <b>' + (sys.streak_days ?? 0) + ' / 7 天</b></span>' +
     '<span class="sys-item">数据 <b>' + (S.empty ? '全部为空 · 由你录入' : '由使用者录入') + '</b></span>';
 
   const days = lastDays(7), byDay = d.telemetry.by_day || {};
@@ -257,12 +331,19 @@ function renderParseResult(n) {
     ['置信度', n.confidence + '%（命中 ' + n.hit_rules + '/8 项规则）'],
   ];
   let html = '<div class="result-head"><div><h4>' + esc(n.title) + '</h4>' +
-    '<div class="muted">共识别 ' + n.date_candidates.length + ' 个日期、' + n.locations.length + ' 处地点，耗时 ' + n.parse_ms + 'ms · 引擎 ' + esc(n.extract_engine || 'local-rules') + '</div>' +
+    '<div class="muted">共识别 ' + n.date_candidates.length + ' 个日期、' + n.locations.length + ' 处地点，耗时 ' + n.parse_ms + 'ms · 引擎 ' + esc(n.extract_engine || 'local-rules') + ' · 导入 ' + esc(IMPORT_LABEL[n.import_type] || '手动粘贴') + '</div>' +
     '<div class="conf-track"><div class="conf-fill" style="width:' + n.confidence + '%"></div></div></div>' +
     '<span class="tag ' + (n.confidence >= 75 ? 'tag-ok' : 'tag-warn') + '">' + (n.confidence >= 75 ? '解析良好' : '建议复核') + '</span></div>';
   html += '<div class="field-grid">' + fields.map(([k, v, em]) =>
     '<div class="field"><label>' + k + '</label><strong class="' + (em ? 'em' : '') + '">' + esc(v) + '</strong></div>').join('') + '</div>';
   if ((n.tags || []).length) html += '<div class="tag-row">' + n.tags.map((t) => '<span class="tag tag-blue">' + esc(t) + '</span>').join('') + '</div>';
+
+  if (n.duplicate_hint && n.duplicate_hint.detected) {
+    html += '<div class="band band-warn"><svg><use href="#i-alert"/></svg><div>' +
+      '<b>疑似重复通知 · CM-FR-109</b><span>检测到 ' + n.duplicate_hint.count +
+      ' 条相似记录，最高相似度 ' + n.duplicate_hint.top_similarity +
+      '%。系统不会自动拒绝，也不会展示他人通知内容，请人工核对后再决定是否保存。</span></div></div>';
+  }
 
   html += '<div class="result-sub">自动生成的待办 · ' + n.todos.length + ' 项</div>' +
     n.todos.map((t, i) => '<div class="todo-item"><i>' + (i + 1) + '</i><span>' + esc(t) + '</span></div>').join('');
@@ -272,6 +353,9 @@ function renderParseResult(n) {
   html += '<div class="review-box"><div class="review-head"><svg><use href="#i-shield"/></svg><b>③ 人工审核</b><span>规则结果不得未经确认直接执行</span></div>' +
     '<div class="form-row"><label>校正标题<input id="review-title" maxlength="60" value="' + esc(n.title) + '"></label>' +
     '<label>校正截止日期<input id="review-deadline" type="date" value="' + esc(n.deadline || '') + '"></label></div>' +
+    '<div class="form-row"><label>提前提醒（分钟 · CM-FR-107）<input id="review-remind" type="number" min="0" max="43200" step="30" value="' + esc(n.remind_minutes ?? 30) + '"></label>' +
+    '<label>导入方式<input value="' + esc(IMPORT_LABEL[n.import_type] || '手动粘贴') + '" readonly></label></div>' +
+    '<div class="hint">0 = 不提醒；1440 = 提前 1 天。提醒会写入导出的 .ics 日历（VALARM）。</div>' +
     '<label class="review-check"><input type="checkbox" id="review-confirm"><span>我已核对以上字段，确认按此结果生成待办</span></label>' +
     '<div class="result-actions">' +
     '<button class="btn btn-primary" id="btn-save-notice"><svg><use href="#i-check"/></svg>确认并保存</button>' +
@@ -281,6 +365,32 @@ function renderParseResult(n) {
   $('#parse-result').innerHTML = html;
   $('#parse-conf').textContent = '置信度 ' + n.confidence + '%';
   $('#parse-conf').className = 'chip ' + (n.confidence >= 75 ? 'good' : 'warn');
+}
+
+function fillReviseSelect() {
+  const sel = $('#revise-notice');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = S.notices.length
+    ? S.notices.map((n) => '<option value="' + esc(n.id) + '">' + esc(n.title) +
+      ' · v' + (n.version || 1) + '</option>').join('')
+    : '<option value="">（还没有已保存的通知）</option>';
+  if (prev && S.notices.some((n) => n.id === prev)) sel.value = prev;
+}
+function renderReviseResult(data) {
+  const changes = data.changes || [];
+  const rows = changes.length
+    ? '<div class="table-wrap"><table class="table"><thead><tr><th>字段</th><th>原版本</th><th>新版本</th></tr></thead><tbody>' +
+      changes.map((c) => '<tr><td><b>' + esc(FIELD_LABEL[c.field] || c.field) + '</b></td>' +
+        '<td>' + esc(c.from) + '</td><td>' + esc(c.to) + '</td></tr>').join('') + '</tbody></table></div>'
+    : '<div class="table-empty"><b>新旧版本字段完全一致</b><br>无需更新，也可以重新贴入不同的原文</div>';
+  $('#revise-result').innerHTML = '<div class="card-head"><h3>字段差异 · ' + changes.length + ' 处</h3>' +
+    '<span class="chip ' + (data.applied ? 'good' : '') + '">' + (data.applied ? '已更新' : '预览中') + '</span></div>' +
+    rows + '<div class="band ' + (data.applied ? 'band-ok' : 'band-info') + '"><svg><use href="#i-info"/></svg><div><b>' +
+    (data.applied ? '已写入 v' + data.notice.version : '尚未写入任何数据') + '</b><span>' +
+    (data.applied ? '旧版本字段快照已保留在该通知的 history 中，可追溯。' :
+      '核对上方差异后点击「确认并更新版本」，才会真正写入。') + '</span></div></div>';
+  $('#btn-revise-apply').classList.toggle('hidden', !!data.applied || !changes.length);
 }
 
 function fillNoticeFilter() {
@@ -301,6 +411,7 @@ function filteredNotices() {
   });
 }
 function renderNoticeList() {
+  fillReviseSelect();
   $('#notice-total').textContent = S.notices.length + ' 条';
   const list = filteredNotices();
   if (!S.notices.length) {
@@ -320,7 +431,11 @@ function renderNoticeList() {
     (n.issuer ? '<span><b>发布</b> ' + esc(n.issuer) + '</span>' : '') +
     (n.event_date ? '<span><b>时间</b> ' + esc(n.event_date + (n.event_time ? ' ' + n.event_time : '')) + '</span>' : '') +
     (n.location ? '<span><b>地点</b> ' + esc(n.location) + '</span>' : '') +
-    (n.deadline ? '<span><b>截止</b> ' + esc(n.deadline) + '</span>' : '') +
+    (n.deadline ? '<span><b>截止</b> ' + esc(n.deadline) + ' · ' + esc(deadlineText(n.deadline)) + '</span>' : '') +
+    '<span><b>版本</b> v' + (n.version || 1) + '</span>' +
+    '<span><b>导入</b> ' + esc(IMPORT_LABEL[n.import_type] || '手动粘贴') + '</span>' +
+    (n.duplicate_hint && n.duplicate_hint.detected
+      ? '<span class="tag tag-warn">疑似重复 ' + n.duplicate_hint.top_similarity + '%</span>' : '') +
     (n.owner_name ? '<span><b>录入</b> ' + esc(n.owner_name) + '</span>' : '') +
     '<span>提取于 ' + esc(String(n.created_at).slice(0, 10)) + '</span></div>' +
     ((n.materials || []).length ? '<div class="notice-meta"><span><b>所需材料</b> ' + esc(n.materials.join('、')) + '</span></div>' : '') +
@@ -427,15 +542,19 @@ function renderMistakes() {
 
 /* ------------------------------ 使用反馈 ------------------------------ */
 function renderFeedback() {
-  const n = S.feedback.length;
+  // 进度是全局真实条数；明细仍按角色隔离（学生看不到他人反馈正文）
+  const n = Math.max(S.feedback.length, S.feedbackProgress);
   $('#fb-progress').textContent = n + ' / 8';
   $('#fb-progress-bar').style.width = Math.min(100, n / 8 * 100) + '%';
   if (!can('feedback.list')) return;
-  $('#fb-list').innerHTML = n ? S.feedback.map((f) =>
+  $('#fb-list').innerHTML = S.feedback.length ? S.feedback.map((f) =>
     '<div class="fb-card"><div class="fb-head"><span>' + esc(f.role) + ' · ' + esc(f.module) + '</span>' +
     '<span class="tag ' + (f.score >= 4 ? 'tag-ok' : f.score >= 3 ? 'tag-warn' : 'tag-bad') + '">' + f.score + ' 分</span></div>' +
+    (f.task_done ? '<p><b>实际任务：</b>' + esc(f.task_done) + '</p>' : '') +
     (f.liked ? '<p><b>有帮助：</b>' + esc(f.liked) + '</p>' : '') +
+    (f.problem ? '<p><b>问题：</b>' + esc(f.problem) + '</p>' : '') +
     (f.suggestion ? '<p><b>建议：</b>' + esc(f.suggestion) + '</p>' : '') +
+    (f.reuse ? '<p><b>再用意愿：</b>' + esc(f.reuse) + '</p>' : '') +
     '<p class="muted">' + esc(String(f.created_at).slice(0, 16).replace('T', ' ')) + '</p></div>').join('')
     : '<div class="table-empty">还没有收到反馈，请邀请同学真实试用后填写</div>';
 }
@@ -478,11 +597,29 @@ function bindEvents() {
   }));
 
   /* 通知：提取 + 人工审核 */
-  $('#notice-input').addEventListener('input', (e) => { $('#notice-count').textContent = e.target.value.length; });
+  $('#notice-input').addEventListener('input', (e) => {
+    $('#notice-count').textContent = e.target.value.length;
+    // 用户手动改动原文时回到「粘贴」；文件导入触发的合成事件不重置来源
+    if (e.isTrusted) {
+      S.importType = 'paste';
+      $('#import-info').textContent = '手动粘贴 · 未选择文件';
+    }
+  });
+  $('#notice-file').addEventListener('change', (e) => {
+    importFile(e.target.files && e.target.files[0]);
+    e.target.value = ''; // 允许重复选择同一文件
+  });
+  const ta = $('#notice-input');
+  ta.addEventListener('dragover', (e) => { e.preventDefault(); ta.classList.add('drag-over'); });
+  ta.addEventListener('dragleave', () => ta.classList.remove('drag-over'));
+  ta.addEventListener('drop', (e) => {
+    e.preventDefault(); ta.classList.remove('drag-over');
+    importFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+  });
   $('#btn-parse').addEventListener('click', guard(async () => {
     const text = $('#notice-input').value.trim();
-    if (!text) { toast('请先粘贴通知内容', true); return; }
-    const n = await api('notice/parse', { method: 'POST', body: { text } });
+    if (!text) { toast('请先粘贴或导入通知内容', true); return; }
+    const n = await api('notice/parse', { method: 'POST', body: { text, import_type: S.importType } });
     S.parsed = n; renderParseResult(n); toast('解析完成，置信度 ' + n.confidence + '%，请人工审核');
   }));
   $('#parse-result').addEventListener('click', guard(async (e) => {
@@ -492,13 +629,18 @@ function bindEvents() {
         ...S.parsed,
         title: ($('#review-title').value || '').trim() || S.parsed.title,
         deadline: $('#review-deadline').value || '',
+        remind_minutes: Math.max(0, Math.min(43200, Number($('#review-remind').value) || 0)),
         reviewed: true, reviewed_at: new Date().toISOString(),
       };
       await api('notice/save', { method: 'POST', body: { notice: n } });
       toast('已确认并保存到待办'); refreshView('notice'); switchView('notice');
     } else if (e.target.closest('#btn-ics-preview')) {
-      downloadText('campus-notice.ics', S.parsed.ics, 'text/calendar;charset=utf-8');
-      toast('已导出日历文件');
+      const r = await api('notice/preview', { method: 'POST', body: {
+        notice: S.parsed,
+        remind_minutes: Math.max(0, Math.min(43200, Number($('#review-remind').value) || 0)),
+      } });
+      downloadText('campus-notice.ics', r.ics, 'text/calendar;charset=utf-8');
+      toast('已导出日历文件（提前 ' + r.remind_minutes + ' 分钟提醒）');
     } else if (e.target.closest('#btn-copy-md')) {
       const n = S.parsed;
       const md = '## ' + n.title + '\n\n- 分类：' + n.category + '\n- 重要程度：' + (n.importance || '普通') +
@@ -524,6 +666,25 @@ function bindEvents() {
     const tg = e.target.closest('[data-toggle]'), del = e.target.closest('[data-del-notice]');
     if (tg) { await api('notice/toggle', { method: 'POST', body: { id: tg.dataset.toggle } }); refreshView('notice'); }
     else if (del) { await api('notice/delete', { method: 'DELETE', body: { id: del.dataset.delNotice } }); toast('已删除'); refreshView('notice'); }
+  }));
+
+  /* 版本比对：先预览差异，人工确认后才写入（CM-FR-110） */
+  $('#btn-revise-preview').addEventListener('click', guard(async () => {
+    const id = $('#revise-notice').value, text = $('#revise-text').value.trim();
+    if (!id) { toast('请先保存一条通知，再比对新版本', true); return; }
+    if (!text) { toast('请粘贴修订后的通知原文', true); return; }
+    const r = await api('notice/revise', { method: 'POST', body: { id, text } });
+    S.revise = { id, text };
+    renderReviseResult(r);
+    toast('已生成字段差异，请核对后再确认');
+  }));
+  $('#btn-revise-apply').addEventListener('click', guard(async () => {
+    if (!S.revise) { toast('请先比对字段差异', true); return; }
+    const r = await api('notice/revise', { method: 'POST', body: { ...S.revise, apply: true } });
+    renderReviseResult(r);
+    S.revise = null;
+    await refreshView('notice');
+    toast('已更新为 v' + r.notice.version + '，旧版本快照已保留');
   }));
 
   /* 器材 */
@@ -592,9 +753,12 @@ function bindEvents() {
     e.preventDefault();
     await api('feedback/add', { method: 'POST', body: {
       role: $('#fb-role').value, module: $('#fb-module').value, score: Number($('#fb-score').value),
+      task_done: $('#fb-task').value, problem: $('#fb-problem').value,
       liked: $('#fb-liked').value, suggestion: $('#fb-suggestion').value,
+      reuse: $('#fb-reuse').value,
     } });
-    ['#fb-role', '#fb-liked', '#fb-suggestion'].forEach((s) => { $(s).value = ''; });
+    ['#fb-role', '#fb-task', '#fb-problem', '#fb-liked', '#fb-suggestion', '#fb-reuse']
+      .forEach((s) => { $(s).value = ''; });
     toast('感谢反馈，已记录'); refreshView('feedback');
   }));
 }
