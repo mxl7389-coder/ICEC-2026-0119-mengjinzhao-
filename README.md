@@ -64,12 +64,12 @@ node server.js
 # 封面 → 用户端 /user/ ｜ 管理端 /admin/
 ```
 
-默认端口 5173；若被本机其它服务占用，会自动顺延到 5174、5175……以终端实际打印的地址为准。也可显式指定：`PORT=8080 node server.js`。
+默认端口 5173；若被本机其它服务占用，会自动顺延到 5174、5175……以终端实际打印的地址为准。也可显式指定：`node server.js --port 8080`。运行 `node server.js --help` 查看全部启动参数。
 
 **第一次打开**：封面页 → 点「管理员 · 进入管理后台」→ 管理端登录页显示「创建管理员账号」，填好显示名称、账号、密码后自动进入后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者从 `/user/` 登录后自行录入数据。**系统当前账号已按你的要求清空，正处于这个「重新注册」状态。**
 
 ```bash
-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录 + 隔离日志目录，129 项断言
+node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录 + 隔离日志目录，132 项断言
 node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
 git push                      # 需要提交到 GitHub 时再执行
 ```
@@ -78,12 +78,21 @@ git push                      # 需要提交到 GitHub 时再执行
 
 ### 局域网访问（同一 Wi-Fi 下的手机 / 同学电脑）
 
-```bash
-LAN=1 node server.js
-# 等价 HOST=0.0.0.0 node server.js；不带 LAN 时默认仍只监听 127.0.0.1
+**推荐写法：命令行参数，PowerShell / CMD / Git Bash 通用**：
+
+```bat
+node server.js --lan
+:: 需要指定端口时：node server.js --lan --port 5174
+:: 查看全部参数：  node server.js --help
 ```
 
-启动日志会列出所有网卡的 IPv4 地址，例如 `http://10.1.44.109:5174/`；把**物理网卡**那一条发给同学即可（VirtualBox / VMware / WSL 的虚拟网卡地址只在虚拟机内有效）。
+> ⚠️ **不要写成 `LAN=1 node server.js`**（除非你在 Git Bash / WSL / macOS / Linux）。PowerShell 会把 `LAN=1` 当成命令名，报「无法将 'LAN=1' 项识别为 cmdlet、函数、脚本文件或可运行程序的名称」。若确实想用环境变量，PowerShell 写法是：
+> ```powershell
+> $env:LAN='1'; $env:PORT='5174'; node server.js
+> ```
+> （该变量只在当前窗口有效；关掉窗口或新开窗口就恢复默认仅本机模式。）
+
+启动日志会列出监听地址与所有网卡的 IPv4，例如 `http://10.1.44.109:5174/`；把**物理网卡**那一条发给同学即可（VirtualBox / VMware / WSL 的虚拟网卡地址只在虚拟机内有效）。不带 `--lan` 时默认仍只监听 `127.0.0.1`。
 
 Windows 首次开放需放行入站端口。**以管理员身份**打开 PowerShell 执行一次：
 
@@ -130,7 +139,7 @@ New-NetFirewallRule -DisplayName 'CampusDesk LAN 5174' -Direction Inbound -Actio
 
 ## Git 迭代记录
 
-> 以下各章节中出现的「50 / 73 / 89 / 115 项断言」及 `v4.0.1` / `v5` / `v6.0.0` / `v6.1.0` 等版本号，均为**当时版本的历史记录**，保留原样便于对照 `git diff`；当前版本为 **v6.2.0**，冒烟测试为 **129/129 通过**。
+> 以下各章节中出现的「50 / 73 / 89 / 115 项断言」及 `v4.0.1` / `v5` / `v6.0.0` / `v6.1.0` 等版本号，均为**当时版本的历史记录**，保留原样便于对照 `git diff`；当前版本为 **v6.2.0**，冒烟测试为 **132/132 通过**。
 
 ### v1 · 基础可运行版
 - 零依赖 HTTP 服务 + 静态资源 + 统一错误处理
@@ -234,7 +243,7 @@ New-NetFirewallRule -DisplayName 'CampusDesk LAN 5174' -Direction Inbound -Actio
 
 | 改动 | 文件 | 真实效果 |
 | --- | --- | --- |
-| 局域网模式 | `server.js` | `LAN=1` / `HOST=0.0.0.0` 监听所有网卡，启动日志打印各网卡 IPv4；不带参数时默认仍只绑 `127.0.0.1` |
+| 局域网模式 | `server.js` | `node server.js --lan` 监听所有网卡，启动日志打印监听地址与各网卡 IPv4；不带参数时默认仍只绑 `127.0.0.1` |
 | 上线前置安全 | `server.js`、`lib/auth.js`、`lib/api.js`、`public/user/app.js` | URL / Cookie 解码移进 try 并加全局 rejection 兜底，畸形输入不再打挂进程；5xx 不外泄内部路径；首次创建管理员仅限本机；通知主键改由服务端生成；借用归还补归属校验；看板日期字段转义；学生借用明细按 `owner_id` 过滤；轮询游标不再跳过 200 条 |
 | 本地离线助手 | `lib/assistant.js`（新增） | 零依赖、不联网、只读。按意图检索通知 / 待办 / 器材库存 / 逾期 / 错题，回答附 `sources`（记录类型 + id + 字段 + 值），资料不足或超出能力明确拒答 |
 | 助手接口 | `lib/api.js` | `POST /api/assistant/ask`，需登录 + `assistant.ask` 权限；学生按 `owner_id` 隔离；`meta` 只记 `q_len` / `intent` / `source_count`，问题原文不落盘 |
@@ -243,7 +252,20 @@ New-NetFirewallRule -DisplayName 'CampusDesk LAN 5174' -Direction Inbound -Actio
 
 **能力边界（重要）**：助手是**确定性的本地检索 + 规则匹配，不是大语言模型**，只回答上述几类问题、不做开放域闲聊、不生成内容；回答中的每个数字都来自你录入的记录，查不到会直接说「本地还没有…」。未接入 Ollama / OCR / RAG，页面不提供承诺不了的多轮对话。
 
-**复测**：`node scripts/smoke-test.js` **129/129 通过**（新增 14 项覆盖助手鉴权 / 拒答 / 来源 / 脱敏 / 数据隔离 / 主键 / 越权 / 畸形输入），13 个 JS 语法检查通过；服务以 `LAN=1` 重启后 `/api/health` 为 `v6.2.0`，局域网 IP 下封面 / 用户端 / 管理端 / 静态资源全部 200。**未做**：防火墙入站规则（当前会话无管理员权限，需你按上文执行一次）、GitHub 远端、SQLite 迁移。
+**复测**：`node scripts/smoke-test.js` **129/129 通过**（新增 14 项覆盖助手鉴权 / 拒答 / 来源 / 脱敏 / 数据隔离 / 主键 / 越权 / 畸形输入），13 个 JS 语法检查通过；服务以 `node server.js --lan` 重启后 `/api/health` 为 `v6.2.0`，局域网 IP 下封面 / 用户端 / 管理端 / 静态资源全部 200。**未做**：防火墙入站规则（当前会话无管理员权限，需你按上文执行一次）、GitHub 远端、SQLite 迁移。
+
+### v6.2 补充 · 启动参数跨终端兼容
+
+**问题驱动**：在 Windows PowerShell 里按当时的文档执行 `LAN=1 node server.js`，报「无法将 'LAN=1' 项识别为 cmdlet、函数、脚本文件或可运行程序的名称」。根因是文档只给了 Bash 系的临时环境变量语法，PowerShell 会把 `LAN=1` 当作命令名；服务端本身没有故障，当时实例仍正常运行在局域网模式。属于交付文档的终端适配缺失。
+
+| 改动 | 文件 | 真实效果 |
+| --- | --- | --- |
+| 命令行参数 | `server.js` | 新增 `--lan` / `--port` / `--host` / `--help`，命令行优先级高于环境变量；`node server.js --lan` 在 PowerShell / CMD / Git Bash 写法完全一致；启动日志增加「监听地址 → …」便于确认模式 |
+| 端口校验 | `server.js` | `--port` 非数字 / 越界时回退到 `PORT` 或 5173，避免 `listen(NaN)` 崩溃 |
+| 文档纠错 | `README.md`、`docs/使用说明.md`、`docs/交付物对照.md` | 可执行示例统一改为 `--lan`；明确标注 `LAN=1 node server.js` 仅限 Bash 系终端，并给出 PowerShell 写法 `$env:LAN='1'; node server.js`；FAQ 新增该报错的排查条目 |
+| 回归测试 | `scripts/smoke-test.js` | 新增 3 项：`--help` 列出参数、同时给出两种终端写法、`--lan --port` 真实启动并绑定 `0.0.0.0` |
+
+**复测**：`node scripts/smoke-test.js` **132/132 通过**（129 + 3），13 个 JS 语法检查通过；另用隔离端口 5196 / 5197 / 5198 分别验证「命令行端口覆盖环境变量」「默认仅监听 127.0.0.1」「`--lan` 绑定 0.0.0.0」。**`APP_VERSION` 保持 `v6.2.0`**：本次只改启动器与文档，无功能、数据结构或日志格式变化，避免运行日志版本号出现无意义跳变。
 
 ---
 
@@ -296,7 +318,7 @@ public/admin/login.html  管理端独立登录页（深墨蓝）+ 首次初始�
 public/admin/index.html  管理员实时日志后台
 public/admin/admin.js    管理端交互
 public/style.css         工作台 / 后台设计系统 + 书院气质装饰层
-scripts/smoke-test.js    129 项冒烟测试（隔离数据目录 + 隔离日志目录）
+scripts/smoke-test.js    132 项冒烟测试（隔离数据目录 + 隔离日志目录）
 scripts/daily-report.js  每日日志汇总 + 连续天数自检 + 一键 git 同步
 scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
 data/                    业务数据 + 空的审计数据集，全部由使用者录入
@@ -310,9 +332,11 @@ docs/用户反馈表.md        8 份真实反馈空白模板
 
 | 目的 | 命令 |
 | --- | --- |
-| 启动网站 | `node server.js` |
-| 局域网访问（同一 Wi-Fi） | `LAN=1 node server.js`，再用手机打开日志里打印的 IP |
-| 指定端口 | `PORT=8080 node server.js` |
+| 启动网站（仅本机） | `node server.js` |
+| 局域网访问（同一 Wi-Fi） | `node server.js --lan`，再用手机打开日志里打印的物理网卡 IP |
+| 指定端口 | `node server.js --port 8080`（可与 `--lan` 叠加） |
+| 查看启动参数 | `node server.js --help` |
+| 旧环境变量写法（Git Bash / WSL） | `LAN=1 PORT=5174 node server.js`；PowerShell 请用 `$env:LAN='1'; node server.js` |
 | 跑接口测试（不污染真实日志） | `node scripts/smoke-test.js` |
 | 列出已注册账号 | `node scripts/reset-password.js` |
 | 重置某账号密码 | `node scripts/reset-password.js --reset 账号` |

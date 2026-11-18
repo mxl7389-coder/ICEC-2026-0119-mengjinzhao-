@@ -2,6 +2,7 @@
 /**
  * 校园事务台 · CampusDesk
  * 零依赖本地服务：node server.js  →  http://localhost:5173（占用时自动顺延）
+ * 局域网访问：node server.js --lan （PowerShell / CMD / Git Bash 通用）
  *
  * 三套完全独立的入口（用户端与管理端登录后互不跳转、UI 上互不可见）：
  *   /            中国书院 × 校园文化动态封面（总入口，两个独立入口卡片）
@@ -19,14 +20,56 @@ const telemetry = require('./lib/telemetry');
 const auth = require('./lib/auth');
 const api = require('./lib/api');
 
-let PORT = Number(process.env.PORT || 5173);
+/* ------------------------------------------------------------------
+ * 启动参数：命令行优先于环境变量，且在所有终端里写法一致。
+ *   node server.js             仅本机（127.0.0.1:5173）
+ *   node server.js --lan       局域网模式（0.0.0.0，推荐）
+ *   node server.js --lan --port 8080
+ *   node server.js --host 0.0.0.0 --port 8080
+ *   node server.js --help
+ * PowerShell 里不能写 `LAN=1 node server.js`（那是 Bash 语法，会报
+ * 「无法将 LAN=1 项识别为 cmdlet」）；用上面的 --lan 即可，或写
+ * `$env:LAN='1'; node server.js`。环境变量方式仍保留兼容。
+ * ------------------------------------------------------------------ */
+const ARGV = process.argv.slice(2);
+function argValue(flag) {
+  const eq = ARGV.find((a) => a.startsWith(flag + '='));
+  if (eq) return eq.slice(flag.length + 1);
+  const i = ARGV.indexOf(flag);
+  return i >= 0 && ARGV[i + 1] && !ARGV[i + 1].startsWith('-') ? ARGV[i + 1] : null;
+}
+if (require.main === module && (ARGV.includes('--help') || ARGV.includes('-h'))) {
+  console.log([
+    'CampusDesk 启动参数',
+    '',
+    '  node server.js                        仅本机访问（默认 127.0.0.1:5173）',
+    '  node server.js --lan                   局域网模式（推荐，任意终端通用）',
+    '  node server.js --lan --port 8080       局域网 + 指定端口',
+    '  node server.js --host 0.0.0.0          等价 --lan',
+    '  node server.js --port 8080             仅本机 + 指定端口',
+    '  node server.js --help                  显示本说明',
+    '',
+    '  环境变量（兼容旧写法）：LAN=1 / HOST=0.0.0.0 / PORT=8080',
+    '    Git Bash / WSL / macOS / Linux : LAN=1 node server.js',
+    '    PowerShell                    : $env:LAN=\'1\'; node server.js',
+    '',
+    '  局域网模式下需放行 Windows 防火墙 TCP 端口，且仅建议在可信本地子网使用。',
+  ].join('\n'));
+  process.exit(0);
+}
+const cliPort = Number(argValue('--port'));
+const cliHost = argValue('--host');
+const envHost = process.env.HOST;
 /**
  * 默认只监听 127.0.0.1（仅本机可访问）。
- * LAN=1 或 HOST=0.0.0.0 时开放局域网：监听所有网卡、启动日志打印可用 IP。
+ * --lan / LAN=1 / HOST=0.0.0.0 时开放局域网：监听所有网卡、启动日志打印可用 IP。
  * 局域网模式额外限制「首次创建管理员」只能在本机完成，避免被同网段抢注。
  */
-const LAN_MODE = process.env.LAN === '1' || process.env.HOST === '0.0.0.0';
-const HOST = process.env.HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1');
+const LAN_MODE = ARGV.includes('--lan') || process.env.LAN === '1' ||
+  cliHost === '0.0.0.0' || envHost === '0.0.0.0';
+let PORT = Number.isFinite(cliPort) && cliPort > 0 && cliPort < 65536
+  ? cliPort : Number(process.env.PORT || 5173);
+const HOST = cliHost || envHost || (LAN_MODE ? '0.0.0.0' : '127.0.0.1');
 const MAX_PORT_RETRY = 8;
 let portRetry = 0;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -361,6 +404,7 @@ server.on('error', (err) => {
 server.on('listening', () => {
   console.log('');
   console.log('  校园事务台 CampusDesk 已启动' + (LAN_MODE ? '（局域网模式）' : '（仅本机）'));
+  console.log('  监听地址 → ' + HOST + ':' + PORT + (LAN_MODE ? '（所有网卡）' : '（仅 127.0.0.1）'));
   console.log('  封面总入口 → http://localhost:' + PORT + '/');
   console.log('  用户端 /user/  （独立登录 + 学生/教师工作台）');
   console.log('  管理端 /admin/ （独立登录 + 实时日志后台）');

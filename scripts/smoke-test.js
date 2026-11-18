@@ -10,7 +10,7 @@
  */
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const telemetry = require('../lib/telemetry');
 const extractor = require('../lib/extractor');
 
@@ -118,6 +118,35 @@ async function main() {
 
   try {
     if (!await waitReady(anon)) throw new Error('服务未能启动');
+
+    /* ---------- 启动参数：跨终端通用（v6.2 启动兼容） ---------- */
+    const help = execFileSync(process.execPath, ['server.js', '--help'],
+      { cwd: ROOT, encoding: 'utf-8' });
+    check('--help 列出 --lan 局域网参数', help.includes('node server.js --lan'));
+    check('--help 同时给出 Bash 与环境变量写法',
+      help.includes('LAN=1 node server.js') && help.includes("$env:LAN='1'"));
+    const ALT_PORT = 5201;
+    const alt = spawn(process.execPath,
+      ['server.js', '--lan', '--port', String(ALT_PORT)], {
+        cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, CAMPUSDESK_DATA_DIR: SMOKE_DIR,
+          CAMPUSDESK_LOG_DIR: SMOKE_LOG_DIR, CAMPUSDESK_LOG_SOURCE: 'smoke' },
+      });
+    let altOut = '';
+    alt.stdout.on('data', (d) => { altOut += d.toString(); });
+    alt.stderr.on('data', (d) => { altOut += d.toString(); });
+    let altOk = false;
+    try {
+      for (let i = 0; i < 30; i++) {
+        await sleep(100);
+        try {
+          const r = await fetch('http://127.0.0.1:' + ALT_PORT + '/api/health');
+          if (r.status === 200) { altOk = true; break; }
+        } catch (_) {}
+      }
+      check('--lan --port 真实启动并绑定所有网卡',
+        altOk && altOut.includes('0.0.0.0:' + ALT_PORT));
+    } finally { alt.kill(); }
 
     /* ---------- 零预置数据 + 首次初始化 ---------- */
     const h = await anon.req('GET', '/api/health');
