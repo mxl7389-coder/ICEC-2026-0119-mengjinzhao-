@@ -1,0 +1,414 @@
+commit fc3600f6b2ffd956bcebe0b03dca53f5fa41cea5
+Author:     CampusDesk <campusdesk@local>
+AuthorDate: Wed Nov 11 09:15:52 2026 +0800
+Commit:     CampusDesk <campusdesk@local>
+CommitDate: Wed Nov 11 09:15:52 2026 +0800
+
+    fix(v2): 依据首日 telemetry 修复通知解析 6 处缺陷
+    
+    日志依据: 25 次调用/3 次报错, notice/parse 置信度 88/88/63, 第三条 warning_count=0 属静默失败
+    - 地点不再吞入时间数字; 日期按原文出现顺序排序, 体测活动日由截止日 11/20 修正为下周三 11/18
+    - 重写截止识别(显式短语 + 日期紧贴前字), 补 全体本科生 对象, 标题改按句读切分, 分类关键词加权
+    - meta 新增 missing_field_count/missing_keys, 补充静默失败 warning, 让规则缺口可从日志直接观察
+    - 复测三条示例置信度全部 88; 一并提交当日真实运行日志与日报
+
+diff --git a/README.md b/README.md
+index bc0258b..28c924d 100644
+--- a/README.md
++++ b/README.md
+@@ -75,7 +75,21 @@ git push
+ - 三大工具 API + 六个前端视图 + 冒烟测试 + 日报脚本
+ 
+ ### v2 · 依据首日日志修复解析缺陷
+-> 首日 `notice/parse` 日志显示：`confidence` 最低仅 63、`hit_rules` 偏低，且地点字段把时间数字一起吞进去了。逐条复核后修复（详见该次 commit diff）。
++
++**日志证据**（`process_logs/` 首日文件）：共 25 次调用、3 次报错（`EMPTY_NOTICE` / `OUT_OF_STOCK` / `UNKNOWN_ROUTE`）；三次 `notice/parse` 的 `confidence` 为 **88 / 88 / 63**，第三条 `hit_rules=5` 但 `warning_count=0` —— 说明规则引擎"自信地"漏掉了字段，属于日志看不出的静默失败。逐条复核后定位到 6 个缺陷：
++
++| # | 现象 | 修复 |
++| --- | --- | --- |
++| 1 | 地点把 `14:30在` 吞成 `30在教学楼A301教室` | 通用地点正则要求中文/字母开头，并过滤介词前缀与子串重复 |
++| 2 | 体测通知把截止日 `11/20` 当成活动日 | `parseDates` 记录命中位置并按原文顺序排序，正确回到"下周三" `11/18` |
++| 3 | `请全体本科生于12月1日前…` 的截止日期为空 | 重写 `parseDeadline`：显式截止短语优先 + 新增「日期紧贴`前`」分支 |
++| 4 | `全体本科生` 未识别为对象 | 扩充对象正则，支持本科/研究生/专科等后缀 |
++| 5 | 标题硬截 30 字，把半句话切进标题 | 优先「关于…的通知」，否则按句读切分并加分类前缀 |
++| 6 | 体测通知被"报名"抢成报名申请 | 分类关键词加权，活动/调课/器材类权重高于通用动词 |
++
++同时让日志变得**可观测**：`meta` 新增 `missing_field_count` / `missing_keys`（只记字段代号），并对"含截止表述却没解析出截止""出现多个日期"给出 warning，避免下次再出现 `warning_count=0` 的静默失败。日志 `app_version` 随之升到 `v2.0.0`。
++
++**复测结果**（`node scripts/smoke-test.js`）：三条示例 `confidence` 全部为 **88**；活动日期 `11-14 / 11-18 / 12-01`，截止 `11-13 / 11-20 / 12-01`，地点 `教学楼A301教室 / 东区操场 / 学生事务中心一楼大厅`。
+ 
+ ### v3 · 依据耗时与报错数据优化
+ > 详见该次 commit diff 与 commit message。
+diff --git a/lib/api.js b/lib/api.js
+index 36ac9bf..87324e6 100644
+--- a/lib/api.js
++++ b/lib/api.js
+@@ -174,11 +174,18 @@ async function handle(ctx) {
+       const text = body.text || '';
+       if (!String(text).trim()) throw fail('EMPTY_NOTICE', '请先粘贴通知内容');
+       const notice = extractor.extract(text, { id: store.uid('nt'), source: 'manual' });
++      // 把「哪些字段没解析出来」也写进日志（只记字段代号，不记内容），
++      // 这样后续迭代可以直接从 telemetry 判断规则缺口，而不必肉眼复核每条通知。
++      const FIELD_CODE = { event_date: 'date', event_time: 'time', location: 'loc', audience: 'aud', deadline: 'ddl' };
++      const missing = Object.keys(FIELD_CODE).filter((k) =>
++        !notice[k] || (Array.isArray(notice[k]) && notice[k].length === 0));
+       return { status: 200, data: notice, meta: {
+         input_len: String(text).length, hit_rules: notice.hit_rules,
+         confidence: notice.confidence, parse_ms: notice.parse_ms,
+         warning_count: notice.warnings.length, category: notice.category_key,
+         todo_count: notice.todos.length, date_candidates: notice.date_candidates.length,
++        missing_field_count: missing.length,
++        missing_keys: missing.map((k) => FIELD_CODE[k]).join(',') || 'none',
+       } };
+     }
+     if (action === 'save' && method === 'POST') {
+diff --git a/lib/extractor.js b/lib/extractor.js
+index 4a833f1..50860f5 100644
+--- a/lib/extractor.js
++++ b/lib/extractor.js
+@@ -44,9 +44,11 @@ function normalize(text) {
+ function parseDates(text, base) {
+   const now = base || new Date();
+   const out = [];
+-  const push = (d, label, source) => {
++  // 记录命中位置：日志显示「截止日」常排在「活动日」前面被误当成活动时间，
++  // 因此统一按原文出现顺序排序，而不是按规则扫描顺序。
++  const push = (d, label, source, pos) => {
+     if (d && !Number.isNaN(d.getTime())) {
+-      out.push({ iso: toISO(d), label, source });
++      out.push({ iso: toISO(d), label, source, pos: pos || 0 });
+     }
+   };
+   const y = now.getFullYear();
+@@ -61,7 +63,7 @@ function parseDates(text, base) {
+       let d = new Date(yy, mm - 1, dd);
+       // 未写年份且日期已过去较久，推定到明年
+       if (!m[1] && (now - d) / 86400000 > 180) d = new Date(yy + 1, mm - 1, dd);
+-      push(d, p2(mm) + '月' + p2(dd) + '日', m[0]);
++      push(d, p2(mm) + '月' + p2(dd) + '日', m[0], m.index);
+     }
+   }
+   // 中文数字：十一月十二日
+@@ -69,13 +71,14 @@ function parseDates(text, base) {
+   while ((m = cnAbs.exec(text)) !== null) {
+     const mm = cnToNum(m[1]), dd = cnToNum(m[2]);
+     if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+-      push(new Date(y, mm - 1, dd), mm + '月' + dd + '日', m[0]);
++      push(new Date(y, mm - 1, dd), mm + '月' + dd + '日', m[0], m.index);
+     }
+   }
+   // 相对日：今天 / 明天 / 后天 / 大后天
+   const rel = { 今天: 0, 今日: 0, 当晚: 0, 明天: 1, 明日: 1, 后天: 2, 大后天: 3 };
+   for (const [word, delta] of Object.entries(rel)) {
+-    if (text.includes(word)) push(addDays(now, delta), word, word);
++    const pos = text.indexOf(word);
++    if (pos >= 0) push(addDays(now, delta), word, word, pos);
+   }
+   // 本周X / 下周X / 周X / 星期X
+   const weekRe = /(本|这|下|上)?\s*(?:周|星期)\s*([一二三四五六日天1-7])/g;
+@@ -87,9 +90,9 @@ function parseDates(text, base) {
+     if (m[1] === '下') diff += 7;
+     else if (m[1] === '上') diff -= 7;
+     else if (!m[1] && diff < 0) diff += 7; // 只写「周三」且已过 → 下周
+-    push(addDays(now, diff), m[0], m[0]);
++    push(addDays(now, diff), m[0], m[0], m.index);
+   }
+-  return out;
++  return out.sort((a, b) => a.pos - b.pos);
+ }
+ 
+ /** 抽取时间段 */
+@@ -121,10 +124,14 @@ function parseLocations(text) {
+     const v = m[1].replace(/^(在|于)\s*/, '').trim();
+     if (v && !found.includes(v)) found.push(v);
+   }
+-  const generic = new RegExp('([\\u4e00-\\u9fa5A-Za-z0-9]{1,10}' + LOCATION_SUFFIX + ')', 'g');
++  // 前缀必须以中文/字母开头：v1 曾把「14:30在教学楼」里的「30在」吞进地点字段，
++  // 该缺陷由首日日志里 confidence 偏低复核时发现。
++  const generic = new RegExp('([\\u4e00-\\u9fa5A-Za-z][\\u4e00-\\u9fa5A-Za-z0-9]{0,9}' + LOCATION_SUFFIX + ')', 'g');
+   while ((m = generic.exec(text)) !== null) {
+-    const v = m[1].replace(/^(在|于|到|前往)\s*/, '').trim();
+-    if (v && !found.includes(v)) found.push(v);
++    const v = m[1].replace(/^(?:在|于|到|前往|至)+/, '').trim();
++    if (!v || v.length < 2 || found.includes(v)) continue;
++    if (found.some((f) => f.includes(v) || v.includes(f))) continue; // 避免「学生事务中心」与「…一楼大厅」重复
++    found.push(v);
+   }
+   return found.slice(0, 4);
+ }
+@@ -132,7 +139,7 @@ function parseLocations(text) {
+ function parseAudience(text) {
+   const found = [];
+   const patterns = [
+-    /(?:全体|全院|全校)(?:同学|学生|师生|教职工|师生员工)/g,
++    /(?:全体|全院|全校)(?:本科|研究生|专科|硕士|博士)?(?:同学|学生|师生员工|师生|教职工|生)/g,
+     /\d{4}\s*级(?:[^\s，,。；;、]{0,6}?(?:班|专业|同学|学生))?/g,
+     /[一二三四五六七八九十\d]{1,3}\s*班/g,
+     /各班(?:班长|学习委员|团支书|同学)?/g,
+@@ -148,11 +155,19 @@ function parseAudience(text) {
+   return found.slice(0, 5);
+ }
+ 
++// 首日日志显示「补测报名截止…」被判成报名申请，而真正的主题是体测活动。
++// 给活动/调课/器材类关键词更高权重，避免「报名」「提交」这类通用动词抢占分类。
++const CATEGORY_WEIGHT = {
++  exam: 1.2, lecture: 1.2, meeting: 1, signup: 1, payment: 1.2,
++  submit: 1, event: 3, schedule: 2.5, equipment: 2, other: 1,
++};
+ function classify(text) {
+   let best = { key: 'other', label: '其他通知', hits: 0 };
++  let bestScore = 0;
+   for (const rule of CATEGORY_RULES) {
+     const hits = rule.words.filter((w) => text.includes(w)).length;
+-    if (hits > best.hits) best = { key: rule.key, label: rule.label, hits };
++    const score = hits * (CATEGORY_WEIGHT[rule.key] || 1);
++    if (score > bestScore) { best = { key: rule.key, label: rule.label, hits }; bestScore = score; }
+   }
+   return best;
+ }
+@@ -174,25 +189,44 @@ function parseTodos(text) {
+   return todos.slice(0, 5);
+ }
+ 
+-/** 截止日期：优先取「截止/之前/前提交」附近的日期 */
+-function parseDeadline(text, dates) {
+-  const near = /(?:截止(?:时间|日期)?(?:到|于|至)?|之前|以前|不迟于|最迟|请于|须于|前(?:提交|上交|完成|报送|缴纳|报名))[\s\S]{0,24}?/g;
++/** 截止日期：优先取显式截止短语后的日期，其次匹配「12月1日前」这类紧贴写法 */
++function parseDeadline(text, base) {
++  const now = base || new Date();
+   let m;
+-  while ((m = near.exec(text)) !== null) {
+-    const tail = text.slice(m.index, m.index + 34);
+-    const found = parseDates(tail, new Date());
++  // v1 的正则用了惰性量词且缺少「于…前」分支，导致「请全体本科生于12月1日前…」被静默漏掉。
++  const markers = /(?:截止(?:时间|日期)?|最迟|不迟于|不晚于|请于|须于|务必于)/g;
++  while ((m = markers.exec(text)) !== null) {
++    const tail = text.slice(m.index, m.index + 40);
++    const found = parseDates(tail, now);
++    if (found.length) return found[0].iso;
++  }
++  const before = /(\d{4}\s*[-/年]\s*\d{1,2}\s*[-/月]\s*\d{1,2}\s*[日号]?|\d{1,2}\s*月\s*\d{1,2}\s*[日号]?)\s*(?:之|以)?前/g;
++  while ((m = before.exec(text)) !== null) {
++    const found = parseDates(m[1], now);
+     if (found.length) return found[0].iso;
+   }
+-  if (/(截止|之前|不迟于|最迟|请于)/.test(text) && dates.length) return dates[dates.length - 1].iso;
+   return null;
+ }
+ 
+-function makeTitle(lines, category) {
+-  const first = (lines[0] || '').trim();
+-  if (/通知|公告|安排|提醒|须知/.test(first) && first.length <= 42) return first;
+-  const about = first.match(/关于[^\n]{2,36}?(?:的)?(?:通知|公告|安排)/);
++function makeTitle(lines, category, text) {
++  const about = String(text).replace(/\n/g, ' ')
++    .match(/关于[^\n，,。]{2,30}?(?:的)?(?:通知|公告|安排|提醒|须知)/);
+   if (about) return about[0];
+-  return (first.slice(0, 30) || category.label + '提醒');
++  // v1 直接截首行前 30 字，会把「请全体本科…」半句话切进标题。
++  const first = (lines[0] || '')
++    .replace(/^【[^】]*】\s*/, '')
++    .replace(/^(?:各位同学|全体同学|同学们|各位|通知)\s*[:：,，]?\s*/, '')
++    .trim();
++  if (/通知|公告|安排|提醒|须知/.test(first)) {
++    const head = first.split(/[，,。；;]/)[0].trim();
++    if (head.length >= 4 && head.length <= 36) return head;
++  }
++  const core = first.split(/[，,。；;]/)[0]
++    .replace(/\d{1,2}\s*[:：]\s*\d{2}(?:\s*[-~～至到]\s*\d{1,2}\s*[:：]\s*\d{2})?/g, '')
++    .replace(/\s{2,}/g, ' ')
++    .trim();
++  const short = core.length > 18 ? core.slice(0, 18) + '…' : core;
++  return short ? category.label + ' · ' + short : category.label + '提醒';
+ }
+ 
+ function icsStamp(iso, time) {
+@@ -245,12 +279,20 @@ function extract(rawText, options = {}) {
+   const audience = parseAudience(text);
+   const category = classify(text);
+   const todos = parseTodos(text);
+-  const deadline = parseDeadline(text, dates);
++  const deadline = parseDeadline(text, base);
+   const tags = TAG_WORDS.filter((w) => text.includes(w)).slice(0, 6);
+ 
+   if (!dates.length) warnings.push('未识别到明确日期，请手动确认时间');
+   if (!locations.length) warnings.push('未识别到地点');
+   if (!todos.length) warnings.push('未识别到具体待办，建议手动补充');
++  // 让「静默失败」进入日志指标：v1 漏识别截止日期时 warning_count 仍为 0，
++  // 从 telemetry 完全看不出解析质量下降。
++  if (!deadline && /(?:截止|最迟|不迟于|请于|须于|[日号]\s*(?:之|以)?前)/.test(text)) {
++    warnings.push('含截止表述但未识别到截止日期，请手动确认');
++  }
++  if (dates.length > 1) {
++    warnings.push('检测到 ' + dates.length + ' 个日期，已按原文出现顺序取第一个作为活动时间');
++  }
+ 
+   // 去重日期，保留出现顺序
+   const seen = new Set();
+@@ -267,7 +309,7 @@ function extract(rawText, options = {}) {
+   const nowIso = base.toISOString();
+   const notice = {
+     id: options.id,
+-    title: makeTitle(lines, category),
++    title: makeTitle(lines, category, text),
+     raw_length: text.length,
+     category: category.label,
+     category_key: category.key,
+diff --git a/lib/telemetry.js b/lib/telemetry.js
+index 8a91d1b..e61cd69 100644
+--- a/lib/telemetry.js
++++ b/lib/telemetry.js
+@@ -14,7 +14,7 @@ const path = require('path');
+ const crypto = require('crypto');
+ 
+ const LOG_DIR = path.join(__dirname, '..', 'process_logs');
+-const APP_VERSION = process.env.APP_VERSION || 'v1.0.0';
++const APP_VERSION = process.env.APP_VERSION || 'v2.0.0';
+ 
+ /** 这些字段一律不进日志，防止把原文/个人信息带出来 */
+ const FORBIDDEN_KEYS = new Set([
+diff --git a/process_logs/2026-11-11.jsonl b/process_logs/2026-11-11.jsonl
+new file mode 100644
+index 0000000..e2ff91a
+--- /dev/null
++++ b/process_logs/2026-11-11.jsonl
+@@ -0,0 +1,50 @@
++{"ts":"2026-11-11T01:10:41.331Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"health","action":"get","status":"ok","duration_ms":7.86,"error_code":null,"meta":{"log_days":0}}
++{"ts":"2026-11-11T01:10:41.342Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"health","action":"get","status":"ok","duration_ms":1.17,"error_code":null,"meta":{"log_days":1}}
++{"ts":"2026-11-11T01:10:41.372Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"bootstrap","action":"get","status":"ok","duration_ms":28.19,"error_code":null,"meta":{"datasets":5}}
++{"ts":"2026-11-11T01:10:41.394Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":4.77,"error_code":null,"meta":{"input_len":100,"hit_rules":7,"confidence":88,"parse_ms":2.7,"warning_count":0,"category":"submit","todo_count":2,"date_candidates":2}}
++{"ts":"2026-11-11T01:10:41.412Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"save","status":"ok","duration_ms":15,"error_code":null,"meta":{"todo_count":2,"confidence":88}}
++{"ts":"2026-11-11T01:10:41.416Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":1.35,"error_code":null,"meta":{"input_len":95,"hit_rules":7,"confidence":88,"parse_ms":0.7,"warning_count":0,"category":"signup","todo_count":2,"date_candidates":2}}
++{"ts":"2026-11-11T01:10:41.422Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":1.16,"error_code":null,"meta":{"input_len":80,"hit_rules":5,"confidence":63,"parse_ms":0.5,"warning_count":0,"category":"signup","todo_count":1,"date_candidates":1}}
++{"ts":"2026-11-11T01:10:41.429Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"list","status":"ok","duration_ms":0.56,"error_code":null,"meta":{"item_count":1}}
++{"ts":"2026-11-11T01:10:41.440Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"toggle","status":"ok","duration_ms":3.86,"error_code":null,"meta":{}}
++{"ts":"2026-11-11T01:10:41.446Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"ics","status":"ok","duration_ms":0.6,"error_code":null,"meta":{"has_time":1}}
++{"ts":"2026-11-11T01:10:41.453Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"error","duration_ms":1.05,"error_code":"EMPTY_NOTICE","meta":{}}
++{"ts":"2026-11-11T01:10:41.460Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"equipment","action":"list","status":"ok","duration_ms":0.38,"error_code":null,"meta":{"item_count":6}}
++{"ts":"2026-11-11T01:10:41.471Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"equipment","action":"add","status":"ok","duration_ms":3.11,"error_code":null,"meta":{"total":3}}
++{"ts":"2026-11-11T01:10:41.488Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"loan","action":"create","status":"ok","duration_ms":13.65,"error_code":null,"meta":{"qty":2,"available_before":20}}
++{"ts":"2026-11-11T01:10:41.493Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"loan","action":"return","status":"ok","duration_ms":3.09,"error_code":null,"meta":{"partial":1}}
++{"ts":"2026-11-11T01:10:41.501Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"loan","action":"return","status":"ok","duration_ms":2.67,"error_code":null,"meta":{"partial":0}}
++{"ts":"2026-11-11T01:10:41.507Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"loan","action":"create","status":"error","duration_ms":0.64,"error_code":"OUT_OF_STOCK","meta":{}}
++{"ts":"2026-11-11T01:10:41.527Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"mistake","action":"add","status":"ok","duration_ms":12.37,"error_code":null,"meta":{"stage":0}}
++{"ts":"2026-11-11T01:10:41.531Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"mistake","action":"review","status":"ok","duration_ms":2.67,"error_code":null,"meta":{"stage":1}}
++{"ts":"2026-11-11T01:10:41.541Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"mistake","action":"review","status":"ok","duration_ms":2.62,"error_code":null,"meta":{"stage":0}}
++{"ts":"2026-11-11T01:10:41.546Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"mistake","action":"list","status":"ok","duration_ms":0.76,"error_code":null,"meta":{"item_count":1,"due_today":0}}
++{"ts":"2026-11-11T01:10:41.566Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"feedback","action":"add","status":"ok","duration_ms":12.94,"error_code":null,"meta":{"score":4,"collected":1}}
++{"ts":"2026-11-11T01:10:41.569Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"not-exist","action":"get","status":"error","duration_ms":0.66,"error_code":"UNKNOWN_ROUTE","meta":{}}
++{"ts":"2026-11-11T01:10:41.585Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"logs","action":"get","status":"ok","duration_ms":9.33,"error_code":null,"meta":{"total_calls":23}}
++{"ts":"2026-11-11T01:10:41.596Z","day":"2026-11-11","app_version":"v1.0.0","session":"b4e984950ff0","module":"logs","action":"day","status":"ok","duration_ms":6.74,"error_code":null,"meta":{"row_count":24}}
++{"ts":"2026-11-11T01:15:22.656Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"health","action":"get","status":"ok","duration_ms":8.01,"error_code":null,"meta":{"log_days":1}}
++{"ts":"2026-11-11T01:15:22.666Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"health","action":"get","status":"ok","duration_ms":0.84,"error_code":null,"meta":{"log_days":1}}
++{"ts":"2026-11-11T01:15:22.692Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"bootstrap","action":"get","status":"ok","duration_ms":24.4,"error_code":null,"meta":{"datasets":5}}
++{"ts":"2026-11-11T01:15:22.701Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":4.72,"error_code":null,"meta":{"input_len":100,"hit_rules":7,"confidence":88,"parse_ms":2.8,"warning_count":1,"category":"submit","todo_count":2,"date_candidates":2,"missing_field_count":0,"missing_keys":"none"}}
++{"ts":"2026-11-11T01:15:22.715Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"save","status":"ok","duration_ms":11.25,"error_code":null,"meta":{"todo_count":2,"confidence":88}}
++{"ts":"2026-11-11T01:15:22.719Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":1.69,"error_code":null,"meta":{"input_len":95,"hit_rules":7,"confidence":88,"parse_ms":1,"warning_count":1,"category":"event","todo_count":2,"date_candidates":2,"missing_field_count":1,"missing_keys":"aud"}}
++{"ts":"2026-11-11T01:15:22.727Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":1.48,"error_code":null,"meta":{"input_len":80,"hit_rules":7,"confidence":88,"parse_ms":0.7,"warning_count":0,"category":"signup","todo_count":1,"date_candidates":1,"missing_field_count":1,"missing_keys":"time"}}
++{"ts":"2026-11-11T01:15:22.735Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"list","status":"ok","duration_ms":0.59,"error_code":null,"meta":{"item_count":1}}
++{"ts":"2026-11-11T01:15:22.749Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"toggle","status":"ok","duration_ms":4.06,"error_code":null,"meta":{}}
++{"ts":"2026-11-11T01:15:22.755Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"ics","status":"ok","duration_ms":0.66,"error_code":null,"meta":{"has_time":1}}
++{"ts":"2026-11-11T01:15:22.764Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"error","duration_ms":1.2,"error_code":"EMPTY_NOTICE","meta":{}}
++{"ts":"2026-11-11T01:15:22.772Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"equipment","action":"list","status":"ok","duration_ms":0.43,"error_code":null,"meta":{"item_count":6}}
++{"ts":"2026-11-11T01:15:22.784Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"equipment","action":"add","status":"ok","duration_ms":2.99,"error_code":null,"meta":{"total":3}}
++{"ts":"2026-11-11T01:15:22.799Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"loan","action":"create","status":"ok","duration_ms":10.92,"error_code":null,"meta":{"qty":2,"available_before":20}}
++{"ts":"2026-11-11T01:15:22.804Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"loan","action":"return","status":"ok","duration_ms":3.21,"error_code":null,"meta":{"partial":1}}
++{"ts":"2026-11-11T01:15:22.813Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"loan","action":"return","status":"ok","duration_ms":3.11,"error_code":null,"meta":{"partial":0}}
++{"ts":"2026-11-11T01:15:22.820Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"loan","action":"create","status":"error","duration_ms":0.75,"error_code":"OUT_OF_STOCK","meta":{}}
++{"ts":"2026-11-11T01:15:22.839Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"mistake","action":"add","status":"ok","duration_ms":10.73,"error_code":null,"meta":{"stage":0}}
++{"ts":"2026-11-11T01:15:22.844Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"mistake","action":"review","status":"ok","duration_ms":2.94,"error_code":null,"meta":{"stage":1}}
++{"ts":"2026-11-11T01:15:22.853Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"mistake","action":"review","status":"ok","duration_ms":2.47,"error_code":null,"meta":{"stage":0}}
++{"ts":"2026-11-11T01:15:22.859Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"mistake","action":"list","status":"ok","duration_ms":0.86,"error_code":null,"meta":{"item_count":1,"due_today":0}}
++{"ts":"2026-11-11T01:15:22.879Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"feedback","action":"add","status":"ok","duration_ms":10.88,"error_code":null,"meta":{"score":4,"collected":1}}
++{"ts":"2026-11-11T01:15:22.881Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"not-exist","action":"get","status":"error","duration_ms":0.6,"error_code":"UNKNOWN_ROUTE","meta":{}}
++{"ts":"2026-11-11T01:15:22.898Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"logs","action":"get","status":"ok","duration_ms":8.66,"error_code":null,"meta":{"total_calls":48}}
++{"ts":"2026-11-11T01:15:22.910Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"logs","action":"day","status":"ok","duration_ms":8.29,"error_code":null,"meta":{"row_count":49}}
+diff --git a/process_logs/summary-2026-11-11.md b/process_logs/summary-2026-11-11.md
+new file mode 100644
+index 0000000..d929850
+--- /dev/null
++++ b/process_logs/summary-2026-11-11.md
+@@ -0,0 +1,70 @@
++# 运行日志日报 · 2026-11-11
++
++> 由 `node scripts/daily-report.js` 自动生成，源文件 `process_logs/2026-11-11.jsonl`。
++> 日志均为程序自动采集并已脱敏：不含通知原文、姓名、学号、题目与反馈正文。
++
++## 概览
++
++| 指标 | 今日 | 昨日 | 变化 |
++| --- | ---: | ---: | ---: |
++| 调用总次数 | 50 | 0 | +50 |
++| 平均耗时 (ms) | 5.26 | 0 | +5.26 |
++| P95 耗时 (ms) | 15 | 0 | — |
++| 最慢一次 (ms) | 28.19 | 0 | — |
++| 报错次数 | 6 | 0 | — |
++| 首次 / 末次调用 | 2026-11-11T01:10:41.331Z | — | 2026-11-11T01:15:22.910Z |
++
++## 调用频次 · 按模块
++
++| 模块 | 次数 |
++| --- | ---: |
++| notice | 16 |
++| loan | 8 |
++| mistake | 8 |
++| health | 4 |
++| equipment | 4 |
++| logs | 4 |
++| bootstrap | 2 |
++| feedback | 2 |
++| not-exist | 2 |
++
++## 调用频次 · 按动作
++
++| 动作 | 次数 |
++| --- | ---: |
++| get | 10 |
++| parse | 8 |
++| list | 6 |
++| add | 6 |
++| create | 4 |
++| return | 4 |
++| review | 4 |
++| save | 2 |
++| toggle | 2 |
++| ics | 2 |
++| day | 2 |
++
++## 报错记录
++
++| 时间 | 模块 | 动作 | 错误码 |
++| --- | --- | --- | --- |
++| 2026-11-11T01:10:41.453Z | notice | parse | EMPTY_NOTICE |
++| 2026-11-11T01:10:41.507Z | loan | create | OUT_OF_STOCK |
++| 2026-11-11T01:10:41.569Z | not-exist | get | UNKNOWN_ROUTE |
++| 2026-11-11T01:15:22.764Z | notice | parse | EMPTY_NOTICE |
++| 2026-11-11T01:15:22.820Z | loan | create | OUT_OF_STOCK |
++| 2026-11-11T01:15:22.881Z | not-exist | get | UNKNOWN_ROUTE |
++
++## 数据文件状态
++
++| 数据集 | 条数 |
++| --- | ---: |
++| notices.json | 0 |
++| equipment.json | 0 |
++| loans.json | 0 |
++| mistakes.json | 0 |
++| feedback.json | 0 |
++
++---
++
++生成时间：2026-11-11T01:15:23.071Z
+diff --git a/scripts/smoke-test.js b/scripts/smoke-test.js
+index a787bfe..fc3b2c8 100644
+--- a/scripts/smoke-test.js
++++ b/scripts/smoke-test.js
+@@ -45,7 +45,7 @@ async function main() {
+   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
+   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+     cwd: ROOT, stdio: 'ignore',
+-    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR, APP_VERSION: 'v1.0.0' },
++    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR },
+   });
+ 
+   try {

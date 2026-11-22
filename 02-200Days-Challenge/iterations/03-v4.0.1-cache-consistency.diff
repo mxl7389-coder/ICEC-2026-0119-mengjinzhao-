@@ -1,0 +1,553 @@
+commit 2710c1fef246e5f715b69ed3018dd9439f1e90da
+Author:     CampusDesk <campusdesk@local>
+AuthorDate: Fri Nov 13 11:32:24 2026 +0800
+Commit:     CampusDesk <campusdesk@local>
+CommitDate: Fri Nov 13 11:32:24 2026 +0800
+
+    fix(v4.0.1): 修复多实例缓存覆盖账号的风险，新增本机账号查看与密码重置工具
+    
+    现场: 5174/5175 两个服务实例并存, 账号在 5175 写入 data/users.json 后, 5174 旧进程内存缓存未刷新, /api/health 持续返回 initialized:false 并再次出现创建管理员页, 提交会用空数组覆盖已有 2 个账号
+    - lib/store.js: 缓存改为带文件指纹(mtime+size+ino), 读取时自动失效重读; update 写入前复核指纹, 被其它进程改动则重读重试
+    - scripts/reset-password.js: 本机列出账号 / 重置密码(可 stdin 输入避免明文进命令历史), 无网页后门; 明确密码 scrypt 不可逆、只能重置不能查看
+    - docs/使用说明.md 与 README 新增账号查询、密码不可查、忘记密码、重复出现初始化页的处理; 版本号升 v4.0.1
+    - 停掉重复实例只保留 5174; 验证 health/auth-state initialized=true、2 个账号完整保留、登录页按状态显示登录表单
+    - 复测: 12 个 JS 语法通过、冒烟测试 50/50 通过、跨进程缓存一致性专项验证通过; 未写入任何业务数据
+
+diff --git a/README.md b/README.md
+index d632afb..6fca9a8 100644
+--- a/README.md
++++ b/README.md
+@@ -79,7 +79,7 @@ git push                      # 需要提交到 GitHub 时再执行
+ 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
+ 
+ ```json
+-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v4.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
++{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v4.0.1","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+ ```
+ 
+ - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
+@@ -138,6 +138,17 @@ git push                      # 需要提交到 GitHub 时再执行
+ 
+ **复测**：`node scripts/smoke-test.js` **50/50 通过**；三个页面共 135 个 DOM id 引用全部核对存在；未登录访问 `/index.html`、`/admin.html` 及其大小写变体均 302 到登录页，学生访问后台 302 到工作台。
+ 
++### v4.0.1 · 依据真实运行现象修复多实例缓存一致性
++
++**现场证据**：本机同时存在 5174 与 5175 两个服务进程；账号在 5175 创建并写入 `data/users.json`（2026-11-12 08:50，2 个账号），但 5174 进程从 11-11 启动后内存缓存未刷新，`/api/health` 一直返回 `initialized: false`，页面再次出现「创建管理员账号」。若在该页提交，旧进程的空数组会**覆盖已有账号文件**。
++
++| # | 改动 | 文件 |
++| --- | --- | --- |
++| 1 | `store` 缓存改为带文件指纹（mtime + size + ino），读取时自动失效重读；`update` 写入前复核指纹，被其它进程改动则重读重试 | `lib/store.js` |
++| 2 | 新增本机账号查看 / 密码重置命令行工具（无网页后门，权限依据是能读写 `data/`） | `scripts/reset-password.js` |
++| 3 | 使用说明新增「在哪里查账号 / 密码为何查不到 / 忘记密码怎么办 / 重复出现初始化页怎么办」 | `docs/使用说明.md` |
++| 4 | 停止重复实例，只保留一个服务；版本号升到 `v4.0.1` | `lib/telemetry.js`、`scripts/smoke-test.js` |
++
+ ---
+ 
+ ## 隐私与数据
+@@ -148,7 +159,7 @@ git push                      # 需要提交到 GitHub 时再执行
+ | `process_logs/*.jsonl` | 脱敏运行日志 | 是，作业要求 |
+ | `process_logs/summary-*.md` | 每日自动汇总 | 是 |
+ 
+-账号密码以哈希保存在本机 `data/users.json`，会话只存 token 哈希。业务数据只留在本机；填写借用人时建议用昵称或学号后四位，不要填真实姓名全名。
++账号密码以 **scrypt 加盐哈希** 保存在本机 `data/users.json`，会话只存 token 哈希；**密码不可逆，任何页面、日志和文件都查不到明文**。查看账号去后台「账号管理」，或本机执行 `node scripts/reset-password.js`；忘记密码只能重置，详见 `docs/使用说明.md` 第七节。业务数据只留在本机；填写借用人时建议用昵称或学号后四位，不要填真实姓名全名。
+ 
+ ---
+ 
+@@ -168,6 +179,7 @@ public/style.css         统一设计系统（8px 栅格 / 设计令牌）
+ public/{login,app,admin}.js
+ scripts/smoke-test.js    50 项冒烟测试（隔离数据目录）
+ scripts/daily-report.js  每日日志汇总 + 一键 git 同步
++scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
+ data/                    业务数据，全部由使用者录入
+ process_logs/            每日 telemetry + 日报
+ docs/使用说明.md         首次使用与日常操作步骤
+@@ -181,6 +193,8 @@ docs/用户反馈表.md        8 份真实反馈空白模板
+ | 启动网站 | `node server.js` |
+ | 指定端口 | `PORT=8080 node server.js` |
+ | 跑接口测试 | `node scripts/smoke-test.js` |
++| 列出已注册账号 | `node scripts/reset-password.js` |
++| 重置某账号密码 | `node scripts/reset-password.js --reset 账号` |
+ | 生成今日日报 | `node scripts/daily-report.js` |
+ | 生成日报并提交 | `node scripts/daily-report.js --sync` |
+ | 查看迭代 diff | `git log --stat`、`git diff HEAD~2 HEAD` |
+diff --git "a/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md" "b/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md"
+index 90573f2..a9fee98 100644
+--- "a/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md"
++++ "b/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md"
+@@ -97,8 +97,24 @@ git push                              # 需要提交到 GitHub 时再执行
+ 
+ ## 七、常见问题
+ 
+-**Q：忘记管理员密码怎么办？**
+-没有内置后门。可以让另一位管理员在后台重置；如果只有一个管理员且忘了密码，需要删除本机 `data/users.json`（会清空所有账号，业务数据不受影响）后重新初始化。请先备份该文件。
++**Q：在哪里查询已注册的账号？**
++两个地方：① 管理员登录后台 → 左侧「**账号管理**」→ 账号列表（显示登录账号、角色、显示名称、状态、创建时间）；② 本机文件 `data/users.json`，或在项目目录执行 `node scripts/reset-password.js` 直接列出全部账号。后者不需要登录，适合忘了管理员密码时用。
++
++**Q：在哪里查询密码？查得到吗？**
++**查不到，这是刻意的安全设计。** 密码用 scrypt 加盐哈希后保存（`salt` + `password_hash`），不可逆，系统里任何页面、日志、`data/users.json` 都不存明文，连开发者也无法还原。日志同样不记录密码或任何凭据。如果确实需要，只能**重置**，不能查看。
++
++**Q：忘记密码怎么办？**
++- 知道旧密码：工作台右上角「修改密码」自己改。
++- 管理员还在登录：后台「账号管理」→ 该账号「重置密码」，填新密码即可（不需要知道旧密码）。
++- **连唯一的管理员密码也忘了**：在项目目录执行
++  ```bash
++  node scripts/reset-password.js                    # 先列出账号，确认账号名
++  node scripts/reset-password.js --reset 2172228108  # 交互式输入新密码（推荐，密码不进命令历史）
++  ```
++  也可以 `node scripts/reset-password.js --reset 账号 新密码` 直接指定，但明文会留在终端历史里。重置后该账号原有会话全部失效，用新密码重新登录即可。此工具只认「能读写本机 `data/` 目录」这一权限，不提供网页后门。
++
++**Q：打开网站又让我「创建管理员账号」，我明明注册过了？**
++通常是本机开了多个服务实例、或手工改过 `data/users.json`，旧进程的内存缓存没跟上。v4.0.1 起已改为按文件指纹自动刷新缓存。遇到这种情况先重启服务，再执行 `node scripts/reset-password.js` 确认账号还在；**不要在「创建管理员账号」页面重复提交**，否则会覆盖已有账号。
+ 
+ **Q：学生看不到器材？**
+ 器材清单初始为空，需要教师或管理员先在「器材借还 → 新增器材」录入。学生账号没有新增器材的权限。
+diff --git a/lib/store.js b/lib/store.js
+index 0c46bd7..3a1300b 100644
+--- a/lib/store.js
++++ b/lib/store.js
+@@ -10,7 +10,18 @@ const path = require('path');
+ const DATA_DIR = process.env.CAMPUSDESK_DATA_DIR
+   ? path.resolve(process.env.CAMPUSDESK_DATA_DIR)
+   : path.join(__dirname, '..', 'data');
+-const cache = new Map();
++// 缓存带「文件指纹」：本机可能同时启动多个服务实例（例如 5174 与 5175），
++// 任一实例写入后，其它实例必须能读到最新内容，不能用旧缓存覆盖账号文件。
++const cache = new Map(); // name -> { value, sig }
++
++function signature(file) {
++  try {
++    const st = fs.statSync(file);
++    return st.mtimeMs + ':' + st.size + ':' + st.ino;
++  } catch (_) {
++    return 'missing';
++  }
++}
+ 
+ const DEFAULTS = {
+   notices: [],   // 通知提取结果（已结构化的待办）
+@@ -34,9 +45,12 @@ function ensureDir() {
+ }
+ 
+ function get(name) {
+-  if (cache.has(name)) return cache.get(name);
+   ensureDir();
+   const file = fileFor(name);
++  const sig = signature(file);
++  const hit = cache.get(name);
++  if (hit && hit.sig === sig) return hit.value;
++
+   let value;
+   if (fs.existsSync(file)) {
+     try {
+@@ -51,7 +65,7 @@ function get(name) {
+     value = DEFAULTS[name].slice();
+     flush(name, value);
+   }
+-  cache.set(name, value);
++  cache.set(name, { value, sig: signature(file) });
+   return value;
+ }
+ 
+@@ -67,14 +81,23 @@ function flush(name, value) {
+ function set(name, value) {
+   if (!Array.isArray(value)) throw new Error('数据集必须是数组');
+   flush(name, value);
+-  cache.set(name, value);
++  cache.set(name, { value, sig: signature(fileFor(name)) });
+   return value;
+ }
+ 
+-/** 读出 → 变换 → 写回，一次完成，避免并发覆盖 */
++/**
++ * 读出 → 变换 → 写回。写入前复核文件指纹，若期间被其它进程改过则重读重试，
++ * 避免「旧实例的空数组」覆盖掉新实例刚创建的账号。
++ */
+ function update(name, fn) {
+-  const next = fn(get(name));
+-  return set(name, next);
++  for (let i = 0; i < 4; i++) {
++    const before = signature(fileFor(name));
++    const next = fn(get(name));
++    if (!Array.isArray(next)) throw new Error('变换结果必须是数组');
++    if (signature(fileFor(name)) !== before) continue;
++    return set(name, next);
++  }
++  throw new Error('数据文件被其它进程频繁修改，请稍后重试');
+ }
+ 
+ function uid(prefix) {
+diff --git a/lib/telemetry.js b/lib/telemetry.js
+index 17feed1..cecdbf8 100644
+--- a/lib/telemetry.js
++++ b/lib/telemetry.js
+@@ -14,7 +14,7 @@ const path = require('path');
+ const crypto = require('crypto');
+ 
+ const LOG_DIR = path.join(__dirname, '..', 'process_logs');
+-const APP_VERSION = process.env.APP_VERSION || 'v4.0.0';
++const APP_VERSION = process.env.APP_VERSION || 'v4.0.1';
+ 
+ /** 实时订阅：管理员后台的 SSE 流会在每次写日志后收到推送 */
+ const listeners = new Set();
+diff --git a/process_logs/2026-11-11.jsonl b/process_logs/2026-11-11.jsonl
+index ef5d802..d5c343a 100644
+--- a/process_logs/2026-11-11.jsonl
++++ b/process_logs/2026-11-11.jsonl
+@@ -183,3 +183,6 @@
+ {"ts":"2026-11-11T01:59:17.690Z","day":"2026-11-11","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"ok","duration_ms":79.38,"error_code":null,"meta":{"role":"student","reconcile_calls":0}}
+ {"ts":"2026-11-11T01:59:17.692Z","day":"2026-11-11","app_version":"v4.0.0","session":"573d3e48236a","role":"student","module":"page","action":"admin","status":"ok","duration_ms":0.38,"error_code":null,"meta":{}}
+ {"ts":"2026-11-11T02:00:48.446Z","day":"2026-11-11","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":1.09,"error_code":null,"meta":{"log_days":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T02:03:10.446Z","day":"2026-11-11","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":1.03,"error_code":null,"meta":{"log_days":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T02:03:10.696Z","day":"2026-11-11","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":0.49,"error_code":null,"meta":{"initialized":0,"reconcile_calls":0}}
++{"ts":"2026-11-11T02:03:26.000Z","day":"2026-11-11","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"home","status":"ok","duration_ms":0.97,"error_code":null,"meta":{}}
+diff --git a/process_logs/2026-11-12.jsonl b/process_logs/2026-11-12.jsonl
+new file mode 100644
+index 0000000..acff9ef
+--- /dev/null
++++ b/process_logs/2026-11-12.jsonl
+@@ -0,0 +1,49 @@
++{"ts":"2026-11-12T00:47:32.266Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":7.1,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:47:32.336Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":2.52,"error_code":null,"meta":{"initialized":0,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.077Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"setup","status":"ok","duration_ms":59.32,"error_code":null,"meta":{"event":"first_admin_created","reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.452Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"page","action":"admin","status":"ok","duration_ms":2.13,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:50:13.525Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":0.65,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.537Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":5.25,"error_code":null,"meta":{"total_calls":193,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.541Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.49,"error_code":null,"meta":{"user_count":1,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.547Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":5.59,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.551Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":1.6,"error_code":null,"meta":{"row_count":8,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:13.557Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-12T00:50:18.781Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":4.15,"error_code":null,"meta":{"total_calls":198,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:20.398Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.52,"error_code":null,"meta":{"user_count":1,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:56.559Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":45.04,"error_code":null,"meta":{"role":"student","reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:56.562Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.33,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:50:56.567Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":3.96,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:21.322Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"page","action":"admin","status":"ok","duration_ms":1.73,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:51:21.436Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":0.45,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:21.453Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":3.99,"error_code":null,"meta":{"total_calls":205,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:21.456Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.35,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:21.461Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":3.88,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:21.464Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":1.3,"error_code":null,"meta":{"row_count":20,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:21.470Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-12T00:51:25.758Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"page","action":"home","status":"ok","duration_ms":0.47,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:51:25.763Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"page","action":"admin","status":"ok","duration_ms":1.55,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:51:25.776Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":0.34,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:25.785Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":3.9,"error_code":null,"meta":{"total_calls":213,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:25.788Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.35,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:25.792Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":3.63,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:25.799Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":2.82,"error_code":null,"meta":{"row_count":28,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:25.806Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-12T00:51:32.061Z","day":"2026-11-12","app_version":"v4.0.0","session":"59406f9050ee","role":"admin","module":"auth","action":"logout","status":"ok","duration_ms":2.11,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:32.086Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":1.71,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:51:32.097Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":0.33,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:51:50.920Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":45.21,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:52:05.783Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":43.63,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:52:06.533Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":43.31,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:52:23.910Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":43.68,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:52:39.148Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"admin","action":"password","status":"error","duration_ms":0.78,"error_code":"UNAUTHORIZED","meta":{}}
++{"ts":"2026-11-12T00:52:39.161Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":1.76,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:52:39.252Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":0.4,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:52:49.463Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":42.95,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:53:07.303Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":43.09,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:53:30.273Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":44.3,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:53:31.935Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":43.33,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-12T00:53:49.041Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"admin","status":"ok","duration_ms":0.4,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:53:49.046Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":1.59,"error_code":null,"meta":{}}
++{"ts":"2026-11-12T00:53:49.060Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":0.4,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-12T00:54:17.982Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":0.72,"error_code":"TOO_MANY_ATTEMPTS","meta":{}}
++{"ts":"2026-11-12T00:54:35.254Z","day":"2026-11-12","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":0.69,"error_code":"TOO_MANY_ATTEMPTS","meta":{}}
+diff --git a/process_logs/2026-11-13.jsonl b/process_logs/2026-11-13.jsonl
+new file mode 100644
+index 0000000..fead745
+--- /dev/null
++++ b/process_logs/2026-11-13.jsonl
+@@ -0,0 +1,60 @@
++{"ts":"2026-11-13T03:23:28.923Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":7.98,"error_code":null,"meta":{}}
++{"ts":"2026-11-13T03:23:29.030Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":3.67,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:23:47.664Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":46.64,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-13T03:23:58.139Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":43.56,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-13T03:25:53.602Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":3.77,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:26:23.552Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":0.99,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:26:23.804Z","day":"2026-11-13","app_version":"v4.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":0.48,"error_code":null,"meta":{"initialized":0,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.305Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":11.48,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.316Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":1.24,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.319Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":1.12,"error_code":null,"meta":{"initialized":0,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.327Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"bootstrap","action":"get","status":"error","duration_ms":1.05,"error_code":"UNAUTHORIZED","meta":{}}
++{"ts":"2026-11-13T03:30:42.454Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"setup","status":"ok","duration_ms":120.24,"error_code":null,"meta":{"event":"first_admin_created","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.457Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"setup","status":"error","duration_ms":1.05,"error_code":"ALREADY_INITIALIZED","meta":{}}
++{"ts":"2026-11-13T03:30:42.464Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":1.14,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.546Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"error","duration_ms":75.73,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-13T03:30:42.627Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":78.49,"error_code":null,"meta":{"role":"student","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.708Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":78.35,"error_code":null,"meta":{"role":"teacher","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.790Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"ok","duration_ms":80.42,"error_code":null,"meta":{"role":"student","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.872Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"login","status":"ok","duration_ms":79.97,"error_code":null,"meta":{"role":"teacher","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.874Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"admin","action":"overview","status":"error","duration_ms":0.86,"error_code":"FORBIDDEN","meta":{}}
++{"ts":"2026-11-13T03:30:42.882Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"logs","action":"get","status":"error","duration_ms":0.99,"error_code":"FORBIDDEN","meta":{}}
++{"ts":"2026-11-13T03:30:42.922Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"bootstrap","action":"get","status":"ok","duration_ms":33.48,"error_code":null,"meta":{"datasets":7,"role":"admin","reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:42.925Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"equipment","action":"list","status":"ok","duration_ms":0.91,"error_code":null,"meta":{"item_count":0,"reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:42.933Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"equipment","action":"add","status":"error","duration_ms":0.83,"error_code":"FORBIDDEN","meta":{}}
++{"ts":"2026-11-13T03:30:42.960Z","day":"2026-11-13","app_version":"v4.0.1","session":"b56a33ec4046","role":"teacher","module":"equipment","action":"add","status":"ok","duration_ms":20.89,"error_code":null,"meta":{"total":3,"reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:42.962Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"equipment","action":"list","status":"ok","duration_ms":1.08,"error_code":null,"meta":{"item_count":1,"reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:42.972Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":4.49,"error_code":null,"meta":{"input_len":100,"hit_rules":7,"confidence":88,"parse_ms":3,"warning_count":1,"category":"submit","todo_count":2,"date_candidates":2,"missing_field_count":0,"missing_keys":"none","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:42.997Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"save","status":"ok","duration_ms":20.75,"error_code":null,"meta":{"todo_count":2,"confidence":88,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.000Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":1.92,"error_code":null,"meta":{"input_len":95,"hit_rules":7,"confidence":88,"parse_ms":1,"warning_count":1,"category":"event","todo_count":2,"date_candidates":2,"missing_field_count":1,"missing_keys":"aud","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.007Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":1.61,"error_code":null,"meta":{"input_len":80,"hit_rules":7,"confidence":88,"parse_ms":0.7,"warning_count":0,"category":"signup","todo_count":1,"date_candidates":1,"missing_field_count":1,"missing_keys":"time","reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.014Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"list","status":"ok","duration_ms":0.83,"error_code":null,"meta":{"item_count":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.021Z","day":"2026-11-13","app_version":"v4.0.1","session":"b56a33ec4046","role":"teacher","module":"notice","action":"list","status":"ok","duration_ms":0.7,"error_code":null,"meta":{"item_count":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.031Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"toggle","status":"ok","duration_ms":3.65,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.037Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"ics","status":"ok","duration_ms":1.04,"error_code":null,"meta":{"has_time":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.044Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"parse","status":"error","duration_ms":1.14,"error_code":"EMPTY_NOTICE","meta":{}}
++{"ts":"2026-11-13T03:30:43.052Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"notice","action":"delete","status":"error","duration_ms":0.87,"error_code":"FORBIDDEN","meta":{}}
++{"ts":"2026-11-13T03:30:43.081Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"loan","action":"create","status":"ok","duration_ms":20.94,"error_code":null,"meta":{"qty":2,"available_before":3,"reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:43.087Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"loan","action":"return","status":"ok","duration_ms":3.69,"error_code":null,"meta":{"partial":1,"reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:43.094Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"loan","action":"return","status":"ok","duration_ms":3.56,"error_code":null,"meta":{"partial":0,"reconcile_calls":1}}
++{"ts":"2026-11-13T03:30:43.100Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"loan","action":"create","status":"error","duration_ms":1.25,"error_code":"OUT_OF_STOCK","meta":{}}
++{"ts":"2026-11-13T03:30:43.126Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"mistake","action":"add","status":"ok","duration_ms":18.95,"error_code":null,"meta":{"stage":0,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.131Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"mistake","action":"review","status":"ok","duration_ms":3.94,"error_code":null,"meta":{"stage":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.139Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"mistake","action":"review","status":"ok","duration_ms":3.25,"error_code":null,"meta":{"stage":0,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.143Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"mistake","action":"list","status":"ok","duration_ms":0.77,"error_code":null,"meta":{"item_count":1,"due_today":0,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.171Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"feedback","action":"add","status":"ok","duration_ms":20.74,"error_code":null,"meta":{"score":4,"collected":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.174Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"feedback","action":"list","status":"error","duration_ms":0.81,"error_code":"FORBIDDEN","meta":{}}
++{"ts":"2026-11-13T03:30:43.182Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"not-exist","action":"get","status":"error","duration_ms":0.82,"error_code":"UNKNOWN_ROUTE","meta":{}}
++{"ts":"2026-11-13T03:30:43.198Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-13T03:30:43.203Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":0.89,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.214Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"poll","status":"ok","duration_ms":6.5,"error_code":null,"meta":{"new_rows":49,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.226Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":9.18,"error_code":null,"meta":{"total_calls":287,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.235Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":6.2,"error_code":null,"meta":{"row_count":51,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.246Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":8.71,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.249Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.84,"error_code":null,"meta":{"user_count":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.422Z","day":"2026-11-13","app_version":"v4.0.1","session":"3b09a908d04b","role":"admin","module":"admin","action":"report","status":"ok","duration_ms":165.12,"error_code":null,"meta":{"generated":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:30:43.428Z","day":"2026-11-13","app_version":"v4.0.1","session":"f5130bf82cb0","role":"student","module":"auth","action":"logout","status":"ok","duration_ms":3.51,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-13T03:31:48.317Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":9.16,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:31:48.326Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":1.2,"error_code":null,"meta":{"log_days":3,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:31:48.331Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":1.13,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-13T03:31:48.338Z","day":"2026-11-13","app_version":"v4.0.1","session":"57efdd91ba75","role":null,"module":"page","action":"home","status":"ok","duration_ms":2.18,"error_code":null,"meta":{}}
+diff --git a/process_logs/summary-2026-11-13.md b/process_logs/summary-2026-11-13.md
+new file mode 100644
+index 0000000..673e656
+--- /dev/null
++++ b/process_logs/summary-2026-11-13.md
+@@ -0,0 +1,111 @@
++# 运行日志日报 · 2026-11-13
++
++> 由 `node scripts/daily-report.js` 自动生成，源文件 `process_logs/2026-11-13.jsonl`。
++> 日志均为程序自动采集并已脱敏：不含通知原文、姓名、学号、题目与反馈正文。
++
++## 概览
++
++| 指标 | 今日 | 昨日 | 变化 |
++| --- | ---: | ---: | ---: |
++| 调用总次数 | 54 | 49 | +5 |
++| 平均耗时 (ms) | 15.64 | 10.69 | +4.95 |
++| P95 耗时 (ms) | 79.97 | 45.04 | — |
++| 最慢一次 (ms) | 120.24 | 59.32 | — |
++| 报错次数 | 13 | 11 | — |
++| 首次 / 末次调用 | 2026-11-13T03:23:28.923Z | — | 2026-11-13T03:30:43.249Z |
++
++## 调用频次 · 按模块
++
++| 模块 | 次数 |
++| --- | ---: |
++| auth | 11 |
++| notice | 10 |
++| admin | 9 |
++| health | 5 |
++| equipment | 4 |
++| loan | 4 |
++| mistake | 4 |
++| bootstrap | 2 |
++| feedback | 2 |
++| page | 1 |
++| logs | 1 |
++| not-exist | 1 |
++
++## 调用频次 · 按动作
++
++| 动作 | 次数 |
++| --- | ---: |
++| get | 9 |
++| login | 6 |
++| list | 6 |
++| add | 4 |
++| parse | 4 |
++| state | 3 |
++| users | 3 |
++| setup | 2 |
++| overview | 2 |
++| create | 2 |
++| return | 2 |
++| review | 2 |
++| me | 1 |
++| save | 1 |
++| toggle | 1 |
++| ics | 1 |
++| delete | 1 |
++| stream | 1 |
++| poll | 1 |
++| summary | 1 |
++| day | 1 |
++
++## 调用频次 · 按角色
++
++| 角色 | 次数 |
++| --- | ---: |
++| student | 23 |
++| anonymous | 17 |
++| admin | 12 |
++| teacher | 2 |
++
++## 报错记录
++
++| 时间 | 模块 | 动作 | 错误码 |
++| --- | --- | --- | --- |
++| 2026-11-13T03:23:47.664Z | auth | login | BAD_CREDENTIALS |
++| 2026-11-13T03:23:58.139Z | auth | login | BAD_CREDENTIALS |
++| 2026-11-13T03:30:42.327Z | bootstrap | get | UNAUTHORIZED |
++| 2026-11-13T03:30:42.457Z | auth | setup | ALREADY_INITIALIZED |
++| 2026-11-13T03:30:42.546Z | auth | login | BAD_CREDENTIALS |
++| 2026-11-13T03:30:42.874Z | admin | overview | FORBIDDEN |
++| 2026-11-13T03:30:42.882Z | logs | get | FORBIDDEN |
++| 2026-11-13T03:30:42.933Z | equipment | add | FORBIDDEN |
++| 2026-11-13T03:30:43.044Z | notice | parse | EMPTY_NOTICE |
++| 2026-11-13T03:30:43.052Z | notice | delete | FORBIDDEN |
++| 2026-11-13T03:30:43.100Z | loan | create | OUT_OF_STOCK |
++| 2026-11-13T03:30:43.174Z | feedback | list | FORBIDDEN |
++| 2026-11-13T03:30:43.182Z | not-exist | get | UNKNOWN_ROUTE |
++
++### 错误码分布
++
++| 错误码 | 次数 |
++| --- | ---: |
++| FORBIDDEN | 5 |
++| BAD_CREDENTIALS | 3 |
++| UNAUTHORIZED | 1 |
++| ALREADY_INITIALIZED | 1 |
++| EMPTY_NOTICE | 1 |
++| OUT_OF_STOCK | 1 |
++| UNKNOWN_ROUTE | 1 |
++
++## 数据文件状态
++
++| 数据集 | 条数 |
++| --- | ---: |
++| notices.json | 0 |
++| equipment.json | 0 |
++| loans.json | 0 |
++| mistakes.json | 0 |
++| feedback.json | 0 |
++
++---
++
++生成时间：2026-11-13T03:30:43.406Z
+diff --git a/scripts/reset-password.js b/scripts/reset-password.js
+new file mode 100644
+index 0000000..aef9360
+--- /dev/null
++++ b/scripts/reset-password.js
+@@ -0,0 +1,94 @@
++'use strict';
++/**
++ * 本机账号维护工具（不需要登录，靠「能读写本机 data/ 目录」作为权限依据）。
++ *
++ *   node scripts/reset-password.js                    列出所有账号（不显示任何密码信息）
++ *   node scripts/reset-password.js --reset 账号        从标准输入读取新密码并重置（密码不进命令行历史）
++ *   node scripts/reset-password.js --reset 账号 新密码  直接以参数指定新密码
++ *
++ * 说明：密码以 scrypt 加盐哈希保存，不可逆，任何工具都「查不出」原密码，只能重置。
++ * 重置会让该账号的登录会话全部失效，需要用新密码重新登录。
++ */
++const fs = require('fs');
++const auth = require('../lib/auth');
++const store = require('../lib/store');
++
++const ROLE_LABEL = { student: '学生', teacher: '教师', admin: '管理员' };
++
++function usage() {
++  console.log([
++    '用法:',
++    '  node scripts/reset-password.js                      列出账号',
++    '  node scripts/reset-password.js --reset <账号>        交互式重置（推荐，密码不留在命令历史）',
++    '  node scripts/reset-password.js --reset <账号> <密码> 直接重置',
++    '',
++    '密码要求: 8–64 位，且同时包含字母和数字。',
++  ].join('\n'));
++}
++
++function list() {
++  const users = auth.listUsers();
++  if (!users.length) {
++    console.log('当前没有任何账号（系统尚未初始化，打开网站会进入「创建管理员账号」页面）。');
++    return;
++  }
++  console.log('共 ' + users.length + ' 个账号，数据文件: ' + store.DATA_DIR + '/users.json');
++  console.log('');
++  console.log('账号'.padEnd(18) + '角色'.padEnd(8) + '显示名称'.padEnd(18) + '状态'.padEnd(8) + '创建时间');
++  console.log('-'.repeat(84));
++  for (const u of users) {
++    console.log(
++      String(u.username).padEnd(18) +
++      String(ROLE_LABEL[u.role] || u.role).padEnd(8) +
++      String(u.display_name || '').padEnd(18) +
++      String(u.active ? '启用' : '停用').padEnd(8) +
++      String(u.created_at || '').slice(0, 19).replace('T', ' ')
++    );
++  }
++  console.log('');
++  console.log('密码列不存在：系统只保存不可逆的 scrypt 哈希，任何页面、日志、文件都查不到明文密码。');
++}
++
++function readPasswordFromStdin() {
++  process.stdout.write('请输入新密码（8–64 位，含字母与数字），输入后回车: ');
++  let value = '';
++  try {
++    value = fs.readFileSync(0, 'utf8');
++  } catch (_) {
++    console.error('\n无法从标准输入读取密码。请改用参数形式，或用管理员后台「账号管理」重置。');
++    process.exit(1);
++  }
++  return value.replace(/\r?\n$/, '');
++}
++
++function main() {
++  const args = process.argv.slice(2);
++  if (!args.length || args[0] === '--list' || args[0] === '-l') return list();
++  if (args[0] === '--help' || args[0] === '-h') return usage();
++
++  if (args[0] === '--reset') {
++    const username = args[1];
++    if (!username) { usage(); process.exit(1); }
++    const password = args[2] !== undefined ? args[2] : readPasswordFromStdin();
++    const user = auth.findUser(username);
++    if (!user) {
++      console.error('账号不存在: ' + username);
++      console.error('可先运行 node scripts/reset-password.js 查看全部账号。');
++      process.exit(1);
++    }
++    try {
++      auth.resetPassword(user.id, password);
++    } catch (err) {
++      console.error('重置失败: ' + err.message);
++      process.exit(1);
++    }
++    console.log('已重置账号 ' + user.username + '（' + (ROLE_LABEL[user.role] || user.role) + '）的密码。');
++    console.log('该账号原有登录会话已全部失效，请用新密码重新登录。');
++    return;
++  }
++
++  usage();
++  process.exit(1);
++}
++
++main();
+diff --git a/scripts/smoke-test.js b/scripts/smoke-test.js
+index 5e5dd11..2c91cf4 100644
+--- a/scripts/smoke-test.js
++++ b/scripts/smoke-test.js
+@@ -249,7 +249,7 @@ async function main() {
+     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
+     check('按天读取日志', day.data.rows.length > 0);
+     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
+-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v4.0.0');
++    const v4rows = day.data.rows.filter((r) => r.app_version === 'v4.0.1');
+     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
+       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
+     const overview = await admin.req('GET', '/api/admin/overview');

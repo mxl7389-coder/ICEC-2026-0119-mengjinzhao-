@@ -1,0 +1,4 @@
+{"ts":"2026-11-20T03:42:57.097Z","day":"2026-11-20","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"admin","action":"poll","status":"error","duration_ms":15.71,"error_code":"UNAUTHORIZED","meta":{}}
+{"ts":"2026-11-20T03:42:57.127Z","day":"2026-11-20","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":11.92,"error_code":null,"meta":{}}
+{"ts":"2026-11-20T03:42:57.130Z","day":"2026-11-20","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"admin","action":"stream","status":"ok","duration_ms":0.65,"error_code":null,"meta":{}}
+{"ts":"2026-11-20T03:42:57.164Z","day":"2026-11-20","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":9.82,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}

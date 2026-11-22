@@ -1,0 +1,30 @@
+# 阶段二 · 源码、运行日志与迭代记录
+
+## 目录约定
+
+课程建议结构把「阶段二源码、`process_logs/`、`iterations/`」放在本目录下。为**保持程序零依赖即跑、且日志由运行中的服务自动写入固定相对路径**，本仓库采用如下安排（不改变程序行为）：
+
+| 内容 | 实际路径 | 说明 |
+| --- | --- | --- |
+| 可运行完整源码 | 仓库根目录 `server.js`、`lib/`、`public/`、`scripts/`、`docs/` | `node server.js --lan` 直接可跑；若整体移入子目录，所有启动命令与 telemetry 写入路径都要同步改动，反而增加出错面 |
+| 自动化运行日志 Telemetry | 根目录 `process_logs/YYYY-MM-DD.jsonl` | 服务按自然日自动追加；日报为 `process_logs/summary-*.md` |
+| 迭代 Diff 记录 | 本目录 `iterations/` | 5 次真实 `git show` Diff + 索引，见 [`iterations/README.md`](iterations/README.md) |
+| 交付物逐项对照 | `docs/交付物对照.md` | SRS 第 8 / 10 章与当前实现的逐项状态 |
+| 使用说明 | `docs/使用说明.md` | 启动、三套入口、局域网、助手、备份、FAQ |
+
+> 若评分要求严格按物理目录归档，可执行一次「整体迁移 + 文档路径同步」；那属于纯结构调整，不影响 Git 历史与迭代 Diff。是否迁移由仓库所有者决定。
+
+## 快速验证源码可运行
+
+```bash
+node server.js --help                 # 查看启动参数
+node server.js --lan --port 5174      # 局域网模式
+node scripts/smoke-test.js            # 132/132 项断言（隔离数据与日志目录）
+node scripts/daily-report.js          # 生成当日运行日报
+```
+
+## 数据真实性
+
+- 业务数据 `data/*.json` 由使用者本人录入；`.gitignore` 排除 `data/`，账号与密码哈希不上传。
+- `process_logs/` 中的记录由真实 HTTP 请求自动采集，含脱敏时间戳、模块、动作、耗时、状态与错误码，不含通知原文、姓名、题目或反馈正文。
+- 冒烟测试写入独立日志目录并跑完即删，**不污染真实 telemetry**。

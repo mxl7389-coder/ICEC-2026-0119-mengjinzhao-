@@ -1,0 +1,500 @@
+commit 4da552d5b8e532b0ff12e1222ecdd27cc255caa6
+Author:     CampusDesk <campusdesk@local>
+AuthorDate: Wed Nov 11 09:22:04 2026 +0800
+Commit:     CampusDesk <campusdesk@local>
+CommitDate: Wed Nov 11 09:22:04 2026 +0800
+
+    perf(v3): 依据耗时与报错日志做结构性优化
+    
+    日志依据: 写类请求 12-15ms vs 读类 <2ms, bootstrap 峰值 28.19ms; 三类报错无法按错误码聚合
+    - handle/route 拆分 + 请求级库存快照缓存, bootstrap 与 dashboard 共用, equipment/list 由 2 次降为 1 次
+    - 新增 availableOf() 单件库存校验; logs/report 改异步 execFile 避免阻塞事件循环
+    - telemetry/daily-report/日志页新增 by_error_code 聚合; meta 新增 reconcile_calls 可观测指标
+    - 修复总览待办不刷新、日志日期下拉跳回今天两处前端状态问题
+    - 冒烟测试 27/27 通过, v3 请求 reconcile_calls 峰值 1; 同步提交当日日志与日报
+
+diff --git a/README.md b/README.md
+index 28c924d..af827f9 100644
+--- a/README.md
++++ b/README.md
+@@ -43,7 +43,7 @@ git push
+ 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
+ 
+ ```json
+-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v1.0.0","session":"a1b2c3d4e5f6","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88,"parse_ms":1.1,"warning_count":0}}
++{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v3.0.0","session":"a1b2c3d4e5f6","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88,"parse_ms":1.1,"warning_count":0}}
+ ```
+ 
+ - **调用频次**：按模块 / 动作 / 自然日聚合，页面「运行日志」可直接看。
+@@ -92,7 +92,20 @@ git push
+ **复测结果**（`node scripts/smoke-test.js`）：三条示例 `confidence` 全部为 **88**；活动日期 `11-14 / 11-18 / 12-01`，截止 `11-13 / 11-20 / 12-01`，地点 `教学楼A301教室 / 东区操场 / 学生事务中心一楼大厅`。
+ 
+ ### v3 · 依据耗时与报错数据优化
+-> 详见该次 commit diff 与 commit message。
++
++**日志证据**：v2 日志里写类请求明显慢于读类 —— `notice/save` 15ms、`loan/create` 13.65ms、`feedback/add` 12.94ms、`mistake/add` 12.37ms，而 `health` / `notice/list` 等读请求普遍 <2ms，峰值 `bootstrap` 28.19ms。同时三类报错（`EMPTY_NOTICE` / `OUT_OF_STOCK` / `UNKNOWN_ROUTE`）在日志页只能看到总次数，无法按错误码定位高频问题。
++
++| # | 优化 | 做法 |
++| --- | --- | --- |
++| 1 | 单请求重复计算 | `handle` / `route` 拆分，加入请求级库存快照缓存；`bootstrap` 与 `dashboard` 共用一次 `reconcile()`，`equipment/list` 从算两次降为一次 |
++| 2 | 借出校验过重 | 新增 `availableOf()`，只算目标器材的可用量，不再为校验单件而重建整张流水表 |
++| 3 | 日报阻塞事件循环 | `logs/report` 由 `execFileSync` 改为异步 `execFile` + Promise |
++| 4 | 报错不可聚合 | `telemetry.aggregate()` 与日报新增 `by_error_code`，日志页新增错误码分布条 |
++| 5 | 优化效果不可见 | 每条日志的 `meta` 新增 `reconcile_calls`（实际计算次数），冒烟测试新增 3 项断言直接校验它 ≤1 |
++
++日志 `app_version` 升到 `v3.0.0`。**复测**：冒烟测试 27/27 项通过，所有 `v3.0.0` 请求的 `reconcile_calls` 均 ≤1，错误码聚合覆盖 3 类。
++
++> 耗时实测：平均 `5.49ms (v1) → 5.03ms (v2) → 5.10ms (v3)`，`bootstrap` `28.19ms → 24.84ms`。**不夸大提速幅度** —— 当前只有 6 类器材、几十条流水，重复计算本身很便宜，主要耗时来自同步写盘与首次启动；这次改动的价值在于数据量增长后不再随流水线性放大，以及去掉 `execFileSync` 对整个事件循环的阻塞，并让 `reconcile_calls` 成为可长期观测的指标。
+ 
+ ---
+ 
+diff --git a/lib/api.js b/lib/api.js
+index 87324e6..b7990ba 100644
+--- a/lib/api.js
++++ b/lib/api.js
+@@ -4,7 +4,7 @@
+  * 所有返回值统一 { status, data, meta }，meta 只含可统计特征，交由 telemetry 脱敏落盘。
+  */
+ const path = require('path');
+-const { execFileSync } = require('child_process');
++const { execFile } = require('child_process');
+ const store = require('./store');
+ const extractor = require('./extractor');
+ const telemetry = require('./telemetry');
+@@ -35,6 +35,13 @@ function outstanding(itemId) {
+     .filter((l) => l.item_id === itemId && l.status !== 'returned')
+     .reduce((sum, l) => sum + Math.max(0, Number(l.qty) - Number(l.returned_qty || 0)), 0);
+ }
++/** 只算单个器材的可用量，借出校验不必遍历全表（v3 性能优化） */
++function availableOf(itemId) {
++  const item = store.get('equipment').find((i) => i.id === itemId);
++  if (!item) return null;
++  return { item, available: Math.max(0, Number(item.total) - outstanding(itemId)) };
++}
++
+ function reconcile() {
+   const items = store.get('equipment');
+   const rows = items.map((it) => {
+@@ -96,9 +103,10 @@ function mistakeView(m) {
+ }
+ 
+ /* --------------------------------- 看板 --------------------------------- */
+-function dashboard() {
++function dashboard(eqSnapshot) {
+   const notices = store.get('notices');
+-  const eq = reconcile();
++  // 同一个请求里 bootstrap 已经算过一次库存快照，直接复用，避免重复遍历全部借还流水
++  const eq = eqSnapshot || reconcile();
+   const mistakes = store.get('mistakes').map(mistakeView);
+   const agg = telemetry.aggregate(telemetry.listDays().slice(-7));
+   const t = today();
+@@ -136,6 +144,21 @@ function dashboard() {
+ 
+ /* ------------------------------ 路由分发 ------------------------------ */
+ async function handle(ctx) {
++  // 请求级缓存：v2 日志显示写类请求 12–15ms、读类普遍 <2ms，其中 equipment/list
++  // 与 bootstrap 都把 reconcile() 重复计算了两次。这里按请求去重，并把实际计算
++  // 次数写进 telemetry，让优化效果能直接从日志核对。
++  const memo = {};
++  let reconcileCalls = 0;
++  const eqOnce = () => {
++    if (!memo.eq) { memo.eq = reconcile(); reconcileCalls++; }
++    return memo.eq;
++  };
++  const result = await route(ctx, eqOnce);
++  result.meta = { ...(result.meta || {}), reconcile_calls: reconcileCalls };
++  return result;
++}
++
++async function route(ctx, eqOnce) {
+   const { method, pathname, query, body } = ctx;
+   const p = pathname.replace(/^\/api\//, '');
+   const seg = p.split('/').filter(Boolean);
+@@ -152,9 +175,10 @@ async function handle(ctx) {
+ 
+   if (group === 'bootstrap') {
+     seedEquipment();
++    const eqSnap = eqOnce();
+     return { status: 200, data: {
+-      dashboard: dashboard(),
+-      equipment: reconcile(),
++      dashboard: dashboard(eqSnap),
++      equipment: eqSnap,
+       notices: store.get('notices'),
+       mistakes: store.get('mistakes').map(mistakeView),
+       feedback: store.get('feedback'),
+@@ -165,7 +189,7 @@ async function handle(ctx) {
+   }
+ 
+   if (group === 'dashboard') {
+-    return { status: 200, data: dashboard(), meta: {} };
++    return { status: 200, data: dashboard(eqOnce()), meta: {} };
+   }
+ 
+   /* ---------- 通知提取 ---------- */
+@@ -238,11 +262,12 @@ async function handle(ctx) {
+   if (group === 'equipment') {
+     if (action === 'seed' && method === 'POST') {
+       const created = seedEquipment();
+-      return { status: 200, data: reconcile(), meta: { created: created ? 1 : 0 } };
++      return { status: 200, data: eqOnce(), meta: { created: created ? 1 : 0 } };
+     }
+     if (action === 'list') {
+       seedEquipment();
+-      return { status: 200, data: reconcile(), meta: { item_count: reconcile().items.length } };
++      const snap = eqOnce(); // v2 在这里算了两次，现在一次即可
++      return { status: 200, data: snap, meta: { item_count: snap.items.length } };
+     }
+     if (action === 'add' && method === 'POST') {
+       const name = requireField(body, 'name');
+@@ -254,13 +279,13 @@ async function handle(ctx) {
+         created_at: new Date().toISOString(),
+       };
+       store.update('equipment', (arr) => [...arr, item]);
+-      return { status: 200, data: reconcile(), meta: { total } };
++      return { status: 200, data: eqOnce(), meta: { total } };
+     }
+     if (action === 'delete' && method === 'DELETE') {
+       const id = requireField(body, 'id');
+       if (outstanding(id) > 0) throw fail('HAS_LOAN', '该器材尚有未归还借用，不能删除');
+       store.update('equipment', (arr) => arr.filter((i) => i.id !== id));
+-      return { status: 200, data: reconcile(), meta: {} };
++      return { status: 200, data: eqOnce(), meta: {} };
+     }
+   }
+ 
+@@ -269,11 +294,12 @@ async function handle(ctx) {
+       const itemId = requireField(body, 'item_id');
+       const borrower = requireField(body, 'borrower');
+       const qty = Math.max(1, Number(body.qty) || 1);
+-      const item = store.get('equipment').find((i) => i.id === itemId);
+-      if (!item) throw fail('NOT_FOUND', '器材不存在', 404);
+-      const eq = reconcile();
+-      const row = eq.items.find((i) => i.id === itemId);
+-      if (qty > row.available) throw fail('OUT_OF_STOCK', '库存不足，当前可用 ' + row.available + ' ' + item.unit);
++      // 只算这一件器材的可用量，不再为校验而重建整张库存快照
++      const found = availableOf(itemId);
++      if (!found) throw fail('NOT_FOUND', '器材不存在', 404);
++      if (qty > found.available) {
++        throw fail('OUT_OF_STOCK', '库存不足，当前可用 ' + found.available + ' ' + found.item.unit);
++      }
+       const loan = {
+         id: store.uid('ln'), item_id: itemId,
+         borrower: borrower.slice(0, 24), qty,
+@@ -284,7 +310,7 @@ async function handle(ctx) {
+         returned_at: null, status: 'active',
+       };
+       store.update('loans', (arr) => [loan, ...arr]);
+-      return { status: 200, data: reconcile(), meta: { qty, available_before: row.available } };
++      return { status: 200, data: eqOnce(), meta: { qty, available_before: found.available } };
+     }
+     if (action === 'return' && method === 'POST') {
+       const id = requireField(body, 'id');
+@@ -303,10 +329,10 @@ async function handle(ctx) {
+         return target;
+       }));
+       if (!target) throw fail('NOT_FOUND', '借用记录不存在或已全部归还', 404);
+-      return { status: 200, data: reconcile(), meta: { partial: target.status === 'returned' ? 0 : 1 } };
++      return { status: 200, data: eqOnce(), meta: { partial: target.status === 'returned' ? 0 : 1 } };
+     }
+     if (action === 'list') {
+-      return { status: 200, data: reconcile(), meta: { loan_count: store.get('loans').length } };
++      return { status: 200, data: eqOnce(), meta: { loan_count: store.get('loans').length } };
+     }
+   }
+ 
+@@ -370,7 +396,13 @@ async function handle(ctx) {
+     }
+     if (action === 'report' && method === 'POST') {
+       const script = path.join(__dirname, '..', 'scripts', 'daily-report.js');
+-      const output = execFileSync(process.execPath, [script], { encoding: 'utf8', timeout: 15000 });
++      // 改为异步子进程：v2 用 execFileSync 会阻塞整个事件循环，期间所有请求都要排队
++      const output = await new Promise((resolve, reject) => {
++        execFile(process.execPath, [script], { encoding: 'utf8', timeout: 15000 }, (err, stdout) => {
++          if (err) reject(Object.assign(err, { code: 'REPORT_FAILED' }));
++          else resolve(stdout);
++        });
++      });
+       return { status: 200, data: { ok: true, file: 'process_logs/summary-' + today() + '.md', output: output.trim() }, meta: { generated: 1 } };
+     }
+     return { status: 200, data: { ...agg, all_days: telemetry.listDays(), version: telemetry.APP_VERSION }, meta: { total_calls: agg.total_calls } };
+diff --git a/lib/telemetry.js b/lib/telemetry.js
+index e61cd69..7b69c9f 100644
+--- a/lib/telemetry.js
++++ b/lib/telemetry.js
+@@ -14,7 +14,7 @@ const path = require('path');
+ const crypto = require('crypto');
+ 
+ const LOG_DIR = path.join(__dirname, '..', 'process_logs');
+-const APP_VERSION = process.env.APP_VERSION || 'v2.0.0';
++const APP_VERSION = process.env.APP_VERSION || 'v3.0.0';
+ 
+ /** 这些字段一律不进日志，防止把原文/个人信息带出来 */
+ const FORBIDDEN_KEYS = new Set([
+@@ -124,13 +124,15 @@ function aggregate(days) {
+   const wanted = Array.isArray(days) && days.length ? days : listDays().slice(-7);
+   const rows = wanted.flatMap(readDay);
+   const durations = rows.map((r) => r.duration_ms).sort((a, b) => a - b);
+-  const byModule = {}, byAction = {}, byStatus = {}, byDay = {}, errors = [];
++  const byModule = {}, byAction = {}, byStatus = {}, byDay = {}, byErrorCode = {}, errors = [];
+   for (const r of rows) {
+     byModule[r.module] = (byModule[r.module] || 0) + 1;
+     byAction[r.action] = (byAction[r.action] || 0) + 1;
+     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+     byDay[r.day] = (byDay[r.day] || 0) + 1;
+     if (r.status === 'error') {
++      const code = r.error_code || 'UNKNOWN';
++      byErrorCode[code] = (byErrorCode[code] || 0) + 1;
+       errors.push({ ts: r.ts, module: r.module, action: r.action, error_code: r.error_code });
+     }
+   }
+@@ -141,6 +143,7 @@ function aggregate(days) {
+     by_module: byModule,
+     by_action: byAction,
+     by_status: byStatus,
++    by_error_code: byErrorCode,
+     by_day: byDay,
+     avg_duration_ms: durations.length
+       ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length * 100) / 100 : 0,
+diff --git a/process_logs/2026-11-11.jsonl b/process_logs/2026-11-11.jsonl
+index e2ff91a..1fd9642 100644
+--- a/process_logs/2026-11-11.jsonl
++++ b/process_logs/2026-11-11.jsonl
+@@ -48,3 +48,28 @@
+ {"ts":"2026-11-11T01:15:22.881Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"not-exist","action":"get","status":"error","duration_ms":0.6,"error_code":"UNKNOWN_ROUTE","meta":{}}
+ {"ts":"2026-11-11T01:15:22.898Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"logs","action":"get","status":"ok","duration_ms":8.66,"error_code":null,"meta":{"total_calls":48}}
+ {"ts":"2026-11-11T01:15:22.910Z","day":"2026-11-11","app_version":"v2.0.0","session":"b4e984950ff0","module":"logs","action":"day","status":"ok","duration_ms":8.29,"error_code":null,"meta":{"row_count":49}}
++{"ts":"2026-11-11T01:20:30.738Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"health","action":"get","status":"ok","duration_ms":7.88,"error_code":null,"meta":{"log_days":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.749Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"health","action":"get","status":"ok","duration_ms":0.94,"error_code":null,"meta":{"log_days":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.776Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"bootstrap","action":"get","status":"ok","duration_ms":24.84,"error_code":null,"meta":{"datasets":5,"reconcile_calls":1}}
++{"ts":"2026-11-11T01:20:30.785Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":4.83,"error_code":null,"meta":{"input_len":100,"hit_rules":7,"confidence":88,"parse_ms":2.8,"warning_count":1,"category":"submit","todo_count":2,"date_candidates":2,"missing_field_count":0,"missing_keys":"none","reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.800Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"save","status":"ok","duration_ms":12.15,"error_code":null,"meta":{"todo_count":2,"confidence":88,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.804Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":1.72,"error_code":null,"meta":{"input_len":95,"hit_rules":7,"confidence":88,"parse_ms":1,"warning_count":1,"category":"event","todo_count":2,"date_candidates":2,"missing_field_count":1,"missing_keys":"aud","reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.812Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"ok","duration_ms":1.48,"error_code":null,"meta":{"input_len":80,"hit_rules":7,"confidence":88,"parse_ms":0.7,"warning_count":0,"category":"signup","todo_count":1,"date_candidates":1,"missing_field_count":1,"missing_keys":"time","reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.821Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"list","status":"ok","duration_ms":0.52,"error_code":null,"meta":{"item_count":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.833Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"toggle","status":"ok","duration_ms":4.11,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.839Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"ics","status":"ok","duration_ms":0.61,"error_code":null,"meta":{"has_time":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.849Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"notice","action":"parse","status":"error","duration_ms":1.15,"error_code":"EMPTY_NOTICE","meta":{}}
++{"ts":"2026-11-11T01:20:30.857Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"equipment","action":"list","status":"ok","duration_ms":0.35,"error_code":null,"meta":{"item_count":6,"reconcile_calls":1}}
++{"ts":"2026-11-11T01:20:30.869Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"equipment","action":"add","status":"ok","duration_ms":3.02,"error_code":null,"meta":{"total":3,"reconcile_calls":1}}
++{"ts":"2026-11-11T01:20:30.885Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"loan","action":"create","status":"ok","duration_ms":10.9,"error_code":null,"meta":{"qty":2,"available_before":20,"reconcile_calls":1}}
++{"ts":"2026-11-11T01:20:30.890Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"loan","action":"return","status":"ok","duration_ms":2.86,"error_code":null,"meta":{"partial":1,"reconcile_calls":1}}
++{"ts":"2026-11-11T01:20:30.899Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"loan","action":"return","status":"ok","duration_ms":2.87,"error_code":null,"meta":{"partial":0,"reconcile_calls":1}}
++{"ts":"2026-11-11T01:20:30.906Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"loan","action":"create","status":"error","duration_ms":0.65,"error_code":"OUT_OF_STOCK","meta":{}}
++{"ts":"2026-11-11T01:20:30.924Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"mistake","action":"add","status":"ok","duration_ms":10.95,"error_code":null,"meta":{"stage":0,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.929Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"mistake","action":"review","status":"ok","duration_ms":2.78,"error_code":null,"meta":{"stage":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.937Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"mistake","action":"review","status":"ok","duration_ms":2.53,"error_code":null,"meta":{"stage":0,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.945Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"mistake","action":"list","status":"ok","duration_ms":0.85,"error_code":null,"meta":{"item_count":1,"due_today":0,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.963Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"feedback","action":"add","status":"ok","duration_ms":11.16,"error_code":null,"meta":{"score":4,"collected":1,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.966Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"not-exist","action":"get","status":"error","duration_ms":0.58,"error_code":"UNKNOWN_ROUTE","meta":{}}
++{"ts":"2026-11-11T01:20:30.983Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"logs","action":"get","status":"ok","duration_ms":9.4,"error_code":null,"meta":{"total_calls":73,"reconcile_calls":0}}
++{"ts":"2026-11-11T01:20:30.995Z","day":"2026-11-11","app_version":"v3.0.0","session":"b4e984950ff0","module":"logs","action":"day","status":"ok","duration_ms":8.43,"error_code":null,"meta":{"row_count":74,"reconcile_calls":0}}
+diff --git a/process_logs/summary-2026-11-11.md b/process_logs/summary-2026-11-11.md
+index d929850..a852215 100644
+--- a/process_logs/summary-2026-11-11.md
++++ b/process_logs/summary-2026-11-11.md
+@@ -7,42 +7,42 @@
+ 
+ | 指标 | 今日 | 昨日 | 变化 |
+ | --- | ---: | ---: | ---: |
+-| 调用总次数 | 50 | 0 | +50 |
+-| 平均耗时 (ms) | 5.26 | 0 | +5.26 |
++| 调用总次数 | 75 | 0 | +75 |
++| 平均耗时 (ms) | 5.21 | 0 | +5.21 |
+ | P95 耗时 (ms) | 15 | 0 | — |
+ | 最慢一次 (ms) | 28.19 | 0 | — |
+-| 报错次数 | 6 | 0 | — |
+-| 首次 / 末次调用 | 2026-11-11T01:10:41.331Z | — | 2026-11-11T01:15:22.910Z |
++| 报错次数 | 9 | 0 | — |
++| 首次 / 末次调用 | 2026-11-11T01:10:41.331Z | — | 2026-11-11T01:20:30.995Z |
+ 
+ ## 调用频次 · 按模块
+ 
+ | 模块 | 次数 |
+ | --- | ---: |
+-| notice | 16 |
+-| loan | 8 |
+-| mistake | 8 |
+-| health | 4 |
+-| equipment | 4 |
+-| logs | 4 |
+-| bootstrap | 2 |
+-| feedback | 2 |
+-| not-exist | 2 |
++| notice | 24 |
++| loan | 12 |
++| mistake | 12 |
++| health | 6 |
++| equipment | 6 |
++| logs | 6 |
++| bootstrap | 3 |
++| feedback | 3 |
++| not-exist | 3 |
+ 
+ ## 调用频次 · 按动作
+ 
+ | 动作 | 次数 |
+ | --- | ---: |
+-| get | 10 |
+-| parse | 8 |
+-| list | 6 |
+-| add | 6 |
+-| create | 4 |
+-| return | 4 |
+-| review | 4 |
+-| save | 2 |
+-| toggle | 2 |
+-| ics | 2 |
+-| day | 2 |
++| get | 15 |
++| parse | 12 |
++| list | 9 |
++| add | 9 |
++| create | 6 |
++| return | 6 |
++| review | 6 |
++| save | 3 |
++| toggle | 3 |
++| ics | 3 |
++| day | 3 |
+ 
+ ## 报错记录
+ 
+@@ -54,6 +54,17 @@
+ | 2026-11-11T01:15:22.764Z | notice | parse | EMPTY_NOTICE |
+ | 2026-11-11T01:15:22.820Z | loan | create | OUT_OF_STOCK |
+ | 2026-11-11T01:15:22.881Z | not-exist | get | UNKNOWN_ROUTE |
++| 2026-11-11T01:20:30.849Z | notice | parse | EMPTY_NOTICE |
++| 2026-11-11T01:20:30.906Z | loan | create | OUT_OF_STOCK |
++| 2026-11-11T01:20:30.966Z | not-exist | get | UNKNOWN_ROUTE |
++
++### 错误码分布
++
++| 错误码 | 次数 |
++| --- | ---: |
++| EMPTY_NOTICE | 3 |
++| OUT_OF_STOCK | 3 |
++| UNKNOWN_ROUTE | 3 |
+ 
+ ## 数据文件状态
+ 
+@@ -67,4 +78,4 @@
+ 
+ ---
+ 
+-生成时间：2026-11-11T01:15:23.071Z
++生成时间：2026-11-11T01:20:31.161Z
+diff --git a/public/app.js b/public/app.js
+index 241c4a0..b983b69 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -105,7 +105,11 @@ function switchView(name) {
+ async function refreshView(name) {
+   try {
+     if (name === 'dashboard') {
+-      S.dashboard = await api('dashboard');
++      // 总览的待办/复习列表来自业务数据，必须与看板一起刷新，否则新增后回到首页仍是旧列表
++      const [d, n, m] = await Promise.all([
++        api('dashboard'), api('notice/list'), api('mistake/list'),
++      ]);
++      S.dashboard = d; S.notices = n.items; S.mistakes = m.items;
+       renderDashboard();
+     } else if (name === 'notice') {
+       const r = await api('notice/list'); S.notices = r.items; renderNoticeList();
+@@ -326,12 +330,22 @@ function renderLogs() {
+     : '<div class="table-empty">暂无调用数据</div>';
+ 
+   $('#error-count').textContent = (a.by_status.error || 0) + ' 次';
++  const codes = Object.entries(a.by_error_code || {}).sort((x, y) => y[1] - x[1]);
++  const codeMax = Math.max(1, ...codes.map((c) => c[1]));
++  $('#error-codes').innerHTML = codes.length ? codes.map(([k, v]) =>
++    '<div class="bar-row"><span class="bar-name" style="width:112px">' + esc(k) + '</span>' +
++    '<span class="bar-track"><span class="bar-fill" style="width:' + (v / codeMax * 100) + '%"></span></span>' +
++    '<span class="bar-val">' + v + '</span></div>').join('')
++    : '<div class="table-empty">窗口内无报错 ✓</div>';
+   $('#error-list').innerHTML = a.errors.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>模块/动作</th><th>错误码</th></tr></thead><tbody>' +
+     a.errors.slice().reverse().slice(0, 8).map((e) => '<tr><td class="nowrap">' + esc(fmtTime(e.ts)) + '</td><td>' + esc(e.module + ' / ' + e.action) + '</td><td><span class="tag tag-bad">' + esc(e.error_code || '-') + '</span></td></tr>').join('') +
+     '</tbody></table></div>' : '<div class="table-empty">当前窗口内没有报错 ✓</div>';
+ 
+-  $('#log-day-select').innerHTML = a.all_days.slice().reverse().map((d) =>
+-    '<option value="' + d + '"' + (d === S.today ? ' selected' : '') + '>' + d + '</option>').join('') || '<option>' + S.today + '</option>';
++  // 保留用户当前选中的日期，避免 renderLogs 重绘后跳回今天
++  const selectedDay = $('#log-day-select').value || S.today;
++  const dayOptions = a.all_days.slice().reverse();
++  $('#log-day-select').innerHTML = (dayOptions.length ? dayOptions : [S.today])
++    .map((d) => '<option value="' + d + '"' + (d === selectedDay ? ' selected' : '') + '>' + d + '</option>').join('');
+ 
+   const rows = S.dayRows.slice(-25).reverse();
+   $('#log-table').innerHTML = rows.length ? '<div class="table-wrap"><table class="table"><thead><tr>' +
+diff --git a/public/index.html b/public/index.html
+index 596a726..84ffc10 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -216,7 +216,9 @@
+             <div id="module-bars"></div>
+           </div>
+           <div class="card">
+-            <div class="card-head"><h3>报错记录</h3><span class="chip" id="error-count">0 次</span></div>
++            <div class="card-head"><h3>报错与错误码分布</h3><span class="chip" id="error-count">0 次</span></div>
++            <div id="error-codes"></div>
++            <div class="card-head mt"><h3>最近报错</h3></div>
+             <div id="error-list"></div>
+           </div>
+         </div>
+diff --git a/scripts/daily-report.js b/scripts/daily-report.js
+index e645df5..6fa3007 100644
+--- a/scripts/daily-report.js
++++ b/scripts/daily-report.js
+@@ -25,18 +25,22 @@ const prevDay = (() => {
+ const prevRows = telemetry.readDay(prevDay);
+ 
+ function stat(list) {
+-  const byModule = {}, byAction = {}, byStatus = {};
++  const byModule = {}, byAction = {}, byStatus = {}, byErrorCode = {};
+   let errs = [];
+   for (const r of list) {
+     byModule[r.module] = (byModule[r.module] || 0) + 1;
+     byAction[r.action] = (byAction[r.action] || 0) + 1;
+     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+-    if (r.status === 'error') errs.push(r);
++    if (r.status === 'error') {
++      const code = r.error_code || 'UNKNOWN';
++      byErrorCode[code] = (byErrorCode[code] || 0) + 1;
++      errs.push(r);
++    }
+   }
+   const ds = list.map((r) => r.duration_ms).sort((a, b) => a - b);
+   const avg = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : 0;
+   return {
+-    total: list.length, byModule, byAction, byStatus, errs,
++    total: list.length, byModule, byAction, byStatus, byErrorCode, errs,
+     avg: Math.round(avg * 100) / 100,
+     p95: ds.length ? ds[Math.floor(ds.length * 0.95)] : 0,
+     max: ds.length ? ds[ds.length - 1] : 0,
+@@ -79,6 +83,9 @@ if (s.errs.length) {
+ } else {
+   md.push('', '今日无报错。');
+ }
++const errRows = Object.entries(s.byErrorCode).sort((a, b) => b[1] - a[1])
++  .map(([k, v]) => '| ' + k + ' | ' + v + ' |').join('\n');
++md.push('', '### 错误码分布', '', '| 错误码 | 次数 |', '| --- | ---: |', errRows || '| （无） | 0 |');
+ md.push('', '## 数据文件状态', '', '| 数据集 | 条数 |', '| --- | ---: |');
+ for (const name of ['notices', 'equipment', 'loans', 'mistakes', 'feedback']) {
+   const file = path.join(ROOT, 'data', name + '.json');
+diff --git a/scripts/smoke-test.js b/scripts/smoke-test.js
+index fc3b2c8..aa6c407 100644
+--- a/scripts/smoke-test.js
++++ b/scripts/smoke-test.js
+@@ -114,6 +114,12 @@ async function main() {
+     check('日志含报错记录', (logs.data.by_status.error || 0) >= 3, '报错 ' + (logs.data.by_status.error || 0) + ' 次');
+     const day = await req('GET', '/api/logs/day?date=' + telemetry.localDay());
+     check('按天读取日志', day.data.rows.length > 0);
++    check('错误码聚合可用', Object.keys(logs.data.by_error_code || {}).length >= 3,
++      Object.keys(logs.data.by_error_code || {}).join(','));
++    const v3rows = day.data.rows.filter((r) => r.app_version === 'v3.0.0');
++    check('日志含 reconcile_calls 特征', v3rows.some((r) => typeof r.meta.reconcile_calls === 'number'));
++    check('单请求库存快照计算 ≤1 次', v3rows.every((r) => (r.meta.reconcile_calls || 0) <= 1),
++      '峰值 ' + Math.max(...v3rows.map((r) => r.meta.reconcile_calls || 0)) + ' 次');
+     const report = await req('POST', '/api/logs/report', {});
+     check('当日日报生成', report.data.ok);
+ 

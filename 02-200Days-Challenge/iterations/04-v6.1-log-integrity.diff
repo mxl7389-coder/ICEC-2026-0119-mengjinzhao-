@@ -1,0 +1,2505 @@
+commit bc3c68f82084b5f33f2b63d62bde24b4370aaf7f
+Author:     CampusDesk <campusdesk@local>
+AuthorDate: Tue Nov 17 16:53:36 2026 +0800
+Commit:     CampusDesk <campusdesk@local>
+CommitDate: Tue Nov 17 16:53:36 2026 +0800
+
+    feat(v6.1): 验收数据可信度修复 + SRS 功能补齐 + 交付物对照
+    
+    - 日志隔离: telemetry 增加 source 字段; 冒烟测试写入 process_logs/__smoke__/ 并跑完即删, 主日志行数测试前后不变
+    - 连续天数自检: streakInfo() 按当前连续天数判定, 日报/健康页/看板同步显示, 列出断档与达标日期
+    - CM-FR-101: 5 种文本导入 (paste/txt/md/csv/json), 浏览器 FileReader 本地解析 + 拖放
+    - CM-FR-109/110/107: 3-gram Jaccard 查重, 版本快照与字段差异先预览再确认, .ics VALARM 自定义提醒
+    - 反馈表单对齐 8 份问卷, 管理端新增反馈收集页与 8 槽位进度 (当前 0 份)
+    - CM-FR-210: 业务审计表 + SHA256 快照导出/校验/显式确认恢复 (不覆盖账号会话)
+    - 安全加固: CSP script-src self, Referrer-Policy, nosniff, 写请求 Origin/Referer 同源校验
+    - 文档: 使用说明.md 同步 v6.1 口径, 新增 docs/交付物对照.md (SRS 第 8/10 章逐项对照 + JSON→SQLite 映射)
+    - 测试: 冒烟测试 115/115 通过, 12 个 JS 语法检查通过; 重启服务确认为 v6.1.0 单实例
+
+diff --git a/README.md b/README.md
+index 933640d..2e61943 100644
+--- a/README.md
++++ b/README.md
+@@ -52,7 +52,7 @@
+ - 不预置器材、通知、错题、样例文本或反馈：`data/*.json` 初始全部为 `[]`，界面显示明确的空状态与下一步指引。
+ - `lib/api.js` 中已彻底移除 `seedEquipment()` 与自动播种逻辑；`bootstrap` 不再下发示例通知。
+ - `process_logs/` 里的日志是**程序自动采集的运行痕迹**（每次真实请求一行），不是业务数据，也不是补造的历史记录。
+-- 冒烟测试只在 `data/__smoke__/` 隔离目录里造测试账号与记录，跑完即删除，不会污染日常数据。
++- 冒烟测试只在 `data/__smoke__/`（业务数据）与 `process_logs/__smoke__/`（运行日志）两个隔离目录里造测试账号、记录与调用日志，跑完即删除，不会污染日常数据或真实 telemetry。
+ 
+ ---
+ 
+@@ -69,7 +69,7 @@ node server.js
+ **第一次打开**：封面页 → 点「管理员 · 进入管理后台」→ 管理端登录页显示「创建管理员账号」，填好显示名称、账号、密码后自动进入后台 → 在「账号管理」里创建学生 / 教师账号 → 把账号密码线下告知本人 → 使用者从 `/user/` 登录后自行录入数据。**系统当前账号已按你的要求清空，正处于这个「重新注册」状态。**
+ 
+ ```bash
+-node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录，89 项断言
++node scripts/smoke-test.js     # 独立端口 5199 + 隔离数据目录 + 隔离日志目录，115 项断言
+ node scripts/daily-report.js --sync   # 生成当日日报并自动 git commit（不 push）
+ git push                      # 需要提交到 GitHub 时再执行
+ ```
+@@ -85,7 +85,7 @@ git push                      # 需要提交到 GitHub 时再执行
+ 每次页面加载与接口调用结束时，由 `lib/telemetry.js` **自动**写一行 JSONL 到 `process_logs/YYYY-MM-DD.jsonl`：
+ 
+ ```json
+-{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.0.0","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
++{"ts":"2026-11-11T09:12:33.123Z","day":"2026-11-11","app_version":"v6.1.0","source":"live","session":"a1b2c3d4e5f6","role":"student","module":"notice","action":"parse","status":"ok","duration_ms":3.42,"error_code":null,"meta":{"input_len":128,"hit_rules":7,"confidence":88}}
+ ```
+ 
+ - **调用频次**：按模块 / 动作 / 角色 / 自然日聚合，管理员后台实时可见。
+@@ -94,8 +94,10 @@ git push                      # 需要提交到 GitHub 时再执行
+ - **脱敏**：不写通知原文、姓名、学号、题目、反馈正文、账号或密码；`meta` 只留长度、条数、命中规则数等可统计特征，并有字段名黑名单兜底；`session` 为不可逆哈希。
+ - **实时**：管理员后台的 SSE 流无需刷新，新请求落盘即推送。
+ - **每日同步**：`node scripts/daily-report.js --sync` 生成 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git add process_logs/` + `commit`（业务数据按 `.gitignore` 不入库）。
++- **连续天数自检**：日报新增「连续运行达标自检」章节，按**当前连续天数**（不是累计天数）判定，列出断档明细、历史最长连续和达标日期；系统健康页、总览看板同步显示。
++- **来源隔离（v6.1）**：日志新增 `source` 字段；冒烟测试通过 `CAMPUSDESK_LOG_DIR` 写入 `process_logs/__smoke__/`，跑完即删，**不再把测试调用与故意触发的报错混进真实日志**。v6.1 之前的历史记录无该字段，日报标为 `legacy` 并说明其错误率含测试噪声。
+ 
+-> ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。每天用一次、睡前跑一次 `--sync`，7 天后目录里自然就是 7 个日期文件。
++> ⚠️ **诚实说明**：连续 7 天必须由你真实运行、真实使用来累计，程序不会（也不应该）补造历史日志。**当前实际状态：累计 5 天（11-11、12、13、16、17），11-14/15 断档，当前连续仅 2 天**；从 11-16 起需连续使用到 **11-22** 才达标。每天用一次、睡前跑一次 `--sync`。
+ 
+ ### ② 基于日志的 ≥3 次 Git 迭代 Diff（20 分）
+ 
+@@ -103,7 +105,7 @@ git push                      # 需要提交到 GitHub 时再执行
+ 
+ ### ③ 完整源码 + 8 位真实用户反馈（15 分）
+ 
+-源码全部在本仓库。反馈通过工作台「使用反馈」表单收集，也可以线下用 [`docs/用户反馈表.md`](docs/用户反馈表.md) 的 8 份空白模板收集后录入。
++源码全部在本仓库。反馈通过工作台「使用反馈」表单收集（v6.1 起字段与 8 份问卷完全对齐：实际完成的任务、评分、最有帮助的地方、遇到的问题、建议、是否愿意再用），管理端「反馈收集」页显示 `已收 N/8` 槽位与明细；也可以线下用 [`docs/用户反馈表.md`](docs/用户反馈表.md) 的 8 份空白模板收集后录入。**当前已收集 0 份。**
+ 
+ > ⚠️ **诚实说明**：8 份反馈必须由 8 位真实同学试用后亲自填写，系统不生成任何虚构评价，`data/feedback.json` 初始为空。
+ 
+@@ -111,6 +113,8 @@ git push                      # 需要提交到 GitHub 时再执行
+ 
+ ## Git 迭代记录
+ 
++> 以下各章节中出现的「50 / 73 / 89 项断言」及 `v4.0.1` / `v5` / `v6.0.0` 等版本号，均为**当时版本的历史记录**，保留原样便于对照 `git diff`；当前版本为 **v6.1.0**，冒烟测试为 **115/115 通过**。
++
+ ### v1 · 基础可运行版
+ - 零依赖 HTTP 服务 + 静态资源 + 统一错误处理
+ - `telemetry` 自动脱敏日志、`store` JSON 原子存储
+@@ -188,7 +192,41 @@ git push                      # 需要提交到 GitHub 时再执行
+ 
+ **复测**：`node scripts/smoke-test.js` **89/89 通过**；12 个 JS 语法检查通过；用户端 89 / 管理端 65 个静态 DOM 引用全部核对存在（3 个 `review-*` 为审核区动态生成）。日志 `app_version` 升到 `v6.0.0`。
+ 
+-> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、独立审计表、AI 模型管理均在「功能地图」中标注为规划中。
++> **与 SRS 的差异（如实说明）**：SRS 第 7 章规划 React + Electron 桌面客户端、Python FastAPI + SQLite、Ollama 本地模型与本地 OCR。当前交付是第一阶段可运行的零依赖 Node 本地 Web 版，保留前后端分离、模块化、统一数据访问、自动 Telemetry 与 Git 迭代约束；迁移 SQLite 只需替换 `lib/store.js`。PDF / Word / 图片导入、OCR、RAG 问答、二维码、盘点、异常登记、AI 模型管理仍在「功能地图」标注为规划中；**操作审计已于 v6.1 落地**。
++
++### v6.1 · 验收数据可信度修复 + SRS 功能补齐
++
++**起因**：一次只读体检发现四个会影响评分的问题 —— 日志 11-14/15 断档、无 GitHub 远端、8 位反馈 0 份、**冒烟测试日志混进真实 `process_logs/`**（累计 739 次调用中 102 次 error 多为测试故意触发）。本轮只解决能用代码解决的部分。
++
++| 改动 | 文件 | 真实效果 |
++| --- | --- | --- |
++| 测试日志隔离 + `source` 字段 | `lib/telemetry.js`、`scripts/smoke-test.js` | 测试写 `process_logs/__smoke__/` 并跑完删除；断言「全程未向真实日志写入 smoke 记录」通过，主日志行数测试前后不变 |
++| 连续天数自检 | `lib/telemetry.js` `streakInfo()`、`scripts/daily-report.js` | 日报列出当前连续 / 历史最长 / 断档明细 / 达标日期；系统健康页按连续而非累计判定；日报标注「生成时刻 + 截至行数」，说明是静态快照 |
++| CM-FR-101 五种导入 | `public/user/index.html`、`app.js` | 手动粘贴 + `.txt` / `.md` / `.csv` / `.json`，浏览器 FileReader 本地解析、可拖放、不需要任何库；PDF/Word/图片仍如实标规划中 |
++| CM-FR-109 / 110 / 107 | `lib/api.js`、用户端 | 3-gram Jaccard 查重（只给相似度，不泄露他人原文）、版本快照与字段差异「先预览再确认」、自定义提前提醒写入 `.ics` 的 `VALARM` |
++| 反馈与收集进度 | 用户端 / 管理端 / `lib/api.js` | 表单对齐 8 份问卷字段；任何登录用户可见 `已收 N/8`，管理端「反馈收集」页含 8 槽位与明细 |
++| CM-FR-210 审计 + 备份 | `lib/store.js`、`lib/api.js`、管理端 | 新增空的 `audit` 数据集，写操作自动留脱敏痕迹；业务快照导出带 SHA256，可校验、可显式确认后恢复（不动账号与会话） |
++| 安全加固 | `server.js` | CSP 脚本白名单、`Referrer-Policy: same-origin`、`nosniff`；写请求校验 `Origin`/`Referer` 同源，跨站提交返回 `CSRF_ORIGIN_MISMATCH`（本地场景不启用 frame 限制，避免破坏预览面板） |
++| 交付物对照 | `docs/交付物对照.md` | SRS 第 10 章交付清单逐项状态、验收指标对照、架构说明与 JSON→SQLite 表映射 |
++
++**复测**：`node scripts/smoke-test.js` **115/115 通过**（新增 26 项），12 个 JS 语法检查通过，用户端 100 / 管理端 82 个 DOM 引用核对（4 个 `review-*` 为审核区动态生成）。版本 `v6.1.0`。**未做**：SQLite 迁移（会引入依赖、破坏零依赖即跑，建议阶段验收后再动）、GitHub 远端（需要你的账号，见下方）。
++
++---
++
++## 推送到 GitHub（需要你本人操作）
++
++目前 10+ 个提交都在本地 `master`，`git remote -v` 为空，**作业要求的 GitHub 过程数据还交不出来**。步骤：
++
++```bash
++# 1. 在 GitHub 网页新建一个空仓库（不要勾选 README/license，避免冲突），复制其 URL
++git remote add origin https://github.com/<你的用户名>/<仓库名>.git
++git branch -M main                 # 可选，GitHub 默认分支名
++git push -u origin main           # 或 master
++# 2. 之后每天同步
++node scripts/daily-report.js --sync && git push
++```
++
++`.gitignore` 已排除 `data/`（账号、密码哈希与业务数据都不会上传）；提交的是源码、README、文档与 `process_logs/`。若启用双重认证，请用 Personal Access Token 代替密码。
+ 
+ ---
+ 
+@@ -223,12 +261,13 @@ public/admin/login.html  管理端独立登录页（深墨蓝）+ 首次初始
+ public/admin/index.html  管理员实时日志后台
+ public/admin/admin.js    管理端交互
+ public/style.css         工作台 / 后台设计系统 + 书院气质装饰层
+-scripts/smoke-test.js    89 项冒烟测试（隔离数据目录）
+-scripts/daily-report.js  每日日志汇总 + 一键 git 同步
++scripts/smoke-test.js    115 项冒烟测试（隔离数据目录 + 隔离日志目录）
++scripts/daily-report.js  每日日志汇总 + 连续天数自检 + 一键 git 同步
+ scripts/reset-password.js  本机账号查看 / 密码重置（无网页后门）
+-data/                    业务数据，全部由使用者录入
+-process_logs/            每日 telemetry + 日报
++data/                    业务数据 + 空的审计数据集，全部由使用者录入
++process_logs/            每日 telemetry + 日报（测试日志在 __smoke__/，跑完即删）
+ docs/使用说明.md         首次使用与日常操作步骤
++docs/交付物对照.md        SRS 交付物清单 / 验收指标 / 架构与数据映射
+ docs/用户反馈表.md        8 份真实反馈空白模板
+ ```
+ 
+@@ -238,7 +277,7 @@ docs/用户反馈表.md        8 份真实反馈空白模板
+ | --- | --- |
+ | 启动网站 | `node server.js` |
+ | 指定端口 | `PORT=8080 node server.js` |
+-| 跑接口测试 | `node scripts/smoke-test.js` |
++| 跑接口测试（不污染真实日志） | `node scripts/smoke-test.js` |
+ | 列出已注册账号 | `node scripts/reset-password.js` |
+ | 重置某账号密码 | `node scripts/reset-password.js --reset 账号` |
+ | 生成今日日报 | `node scripts/daily-report.js` |
+diff --git "a/docs/\344\272\244\344\273\230\347\211\251\345\257\271\347\205\247.md" "b/docs/\344\272\244\344\273\230\347\211\251\345\257\271\347\205\247.md"
+new file mode 100644
+index 0000000..9ca7d62
+--- /dev/null
++++ "b/docs/\344\272\244\344\273\230\347\211\251\345\257\271\347\205\247.md"
+@@ -0,0 +1,132 @@
++# 交付物对照 · CampusDesk v6.1.0
++
++> 对照《CampusMate 项目需求规格说明书（SRS）V1.0》**第 8 章验收指标**与**第 10 章项目交付物**，逐项如实标注状态。
++>
++> 状态口径：**已交付** = 本仓库中真实存在且可验证；**部分交付** = 有可用替代或只实现了一部分；**未交付** = 明确未做，不伪装成可用；**不适用** = SRS 针对目标架构（本地 AI / SQLite / Electron）提出，当前阶段没有对应组件。
++>
++> 边界重申：当前交付是**第一阶段可运行的零依赖 Node 本地 Web 版**，不是 SRS 第 7 章规划的 React + Electron / FastAPI + SQLite / Ollama 桌面应用。所有「未交付」项都保留真实状态，供阶段验收时核对。
++
++---
++
++## 一、SRS 第 10 章 · 项目交付物清单
++
++| # | SRS 交付物 | 状态 | 本仓库现状与位置 | 差距 / 下一步 |
++| --- | --- | --- | --- | --- |
++| 1 | Windows 桌面安装程序 | **未交付** | 无。当前以 `node server.js` 启动本地 Web 服务，浏览器访问 | 需 Electron 打包 + 安装包签名，属后续阶段 |
++| 2 | 完整项目源代码 | **已交付** | `server.js`、`lib/*.js`、`public/**`、`scripts/*.js`，零第三方依赖，Node 18+ 直接跑 | 无 |
++| 3 | GitHub 仓库及提交记录 | **部分交付** | 本地 Git 仓库已有 10+ 次提交（`git log --oneline`），含 v1→v6.1 迭代；`git remote -v` **为空** | 需你本人在 GitHub 建空仓库后 `git remote add origin` + `git push`，见 README「推送到 GitHub」 |
++| 4 | 数据库设计文档 | **部分交付** | 无独立文档；本文件第四节给出 `data/*.json` → SRS 24 张表的映射与差异 | 真正落地 SQLite 时需补建表 DDL、外键、索引、Alembic 迁移版本 |
++| 5 | 软件需求规格说明书 | **已交付（输入）** | 由你提供 SRS V1.0 全文；本仓库以功能地图（`CM-FR-xxx`）与本文对照方式引用 | 不需要代写，避免虚构需求 |
++| 6 | 系统架构图 | **部分交付** | 本文第三节为文字化架构说明；README 目录结构与接口分组可对照 | 需补一张正式架构图（可用 mermaid / drawio 导出） |
++| 7 | 测试用例和测试报告 | **已交付** | `scripts/smoke-test.js`，**115/115 通过**；覆盖鉴权、越权、零数据、SSE、日志隔离、5 种导入、查重、版本、提醒、反馈、审计、备份、CSRF、双端页面 | 测试报告以冒烟测试输出 + README「复测」段落呈现，未单独成册 |
++| 8 | Telemetry Logs | **已交付** | `process_logs/YYYY-MM-DD.jsonl`，自动脱敏、按自然日切分；含 `duration_ms` / `error_code` / `role` / `source` / `app_version` | 数量取决于真实使用，当前 5 个日期文件；测试日志已隔离到 `__smoke__/` 且跑完即删 |
++| 9 | 7 天运行报告 | **未交付** | `scripts/daily-report.js` 可按日生成 `process_logs/summary-*.md`，并含连续天数自检 | **当前连续仅 2 天**（11-16、11-17），11-14/15 断档；需真实连续使用到 11-22，程序不补造历史日志 |
++| 10 | 三次迭代 Diff 记录 | **已交付** | 本地 Git v1→v2→v3→v4→v4.0.1→v5→v6→v6.1，README「Git 迭代记录」逐次写明日志证据、改动、复测结果；`git log --stat` / `git diff` 可查 | 需 push 到 GitHub 后过程数据才可公开核对 |
++| 11 | 八位用户真实反馈 | **未交付** | `docs/用户反馈表.md` 为 8 份空白模板；网页反馈表单与问卷字段对齐，管理端显示 `已收 N/8` | **当前 0 份**。必须由 8 位真实同学试用后填写，系统不代填、不伪造 |
++| 12 | 软件使用说明书 | **已交付** | `docs/使用说明.md`（v6.1 口径）：启动、重新注册、账号、双端日常使用、备份恢复、7 天日志、FAQ、验证命令 | 无 |
++
++---
++
++## 二、SRS 第 8 章 · 验收指标对照
++
++### 8.1 功能验收
++
++| 指标 | 状态 | 实际能力 | 说明 |
++| --- | --- | --- | --- |
++| 通知支持 ≥5 种导入方式或文件类型 | **已达成** | `paste` / `.txt` / `.md` / `.csv` / `.json`，浏览器 `FileReader` 本地解析 + 拖放 | PDF / Word / JPG / PNG 仍为规划中；凑够 5 种的是文本类，不冒充图片识别 |
++| 能提取通知核心字段 | **已达成（规则引擎）** | 标题、发布单位、类别、对象、活动时间、截止、地点、联系方式、所需材料、待办、重要程度 | 本地规则引擎 `lib/extractor.js`，**不是 AI/OCR**；置信度与 `missing_keys` 可在日志中观察 |
++| AI 结果能够人工核对 | **已达成** | 原文 + 提取结果并列，可改标题/截止、必须勾选确认、可拒绝 | 对应 CM-FR-105；无 AI 模型，人工审核环节完整 |
++| 能够生成和管理待办 | **部分达成** | 确认通知后生成待办，可导出 `.ics`（支持自定义 `VALARM` 提醒）、复制 Markdown | 独立待办 CRUD、提醒状态回写、任务完成率统计尚未实现 |
++| 器材支持完整借出、归还流程 | **部分达成** | 器材档案（编号/型号/位置/购买日期/备注）、借出、部分归还、全部归还、逾期标记 | 借用审批人、盘点、异常登记、二维码未实现 |
++| 库存变化能够正确追踪 | **已达成** | `availableOf()` 按流水实时算可用库存，单件库存校验，写类请求有快照缓存 | v3 起由日志驱动优化 |
++| 能够完成账实盘点和差异记录 | **未达成** | — | CM-FR-208，规划中 |
++| AI 和本地数据库可以独立工作 | **不适用** | 当前无 AI 模型、无 SQLite；业务功能不依赖任何 AI 服务即可完整运行 | 从「AI 不可用不影响基础业务」角度看，基础业务确实 100% 可用，但不能表述为「AI 已接入」 |
++
++### 8.2 运行验收
++
++| 指标 | 状态 | 实际能力 |
++| --- | --- | --- |
++| 连续真实运行 ≥7 天 | **未达标** | 累计 5 天（11-11、12、13、16、17），**当前连续 2 天**，断档 11-14/15；需连续到 11-22 |
++| 每天保存运行记录 | **已达成** | 按自然日 `process_logs/YYYY-MM-DD.jsonl` + `summary-*.md` 日报 |
++| 记录 AI 调用次数 | **不适用 → 已用等价指标替代** | 当前记录**业务请求**次数（按模块/动作/角色/来源聚合），不是 AI 调用；SRS 的 `CM-FR-502/503` 待接入模型后补 |
++| 记录请求耗时 | **已达成** | `duration_ms`，日报给平均值 / P95 / 峰值 |
++| 记录错误和异常 | **已达成** | `status=error` + `error_code`，`by_error_code` 聚合；v6.1 起区分 `live` / `legacy` / `smoke`，测试故意触发的报错不再混入真实错误率 |
++| 形成完整 Telemetry Logs | **已达成** | 脱敏 JSONL；不写通知原文、姓名、学号、题目、反馈正文、账号或密码；`session` 为不可逆哈希 |
++
++### 8.3 迭代验收
++
++| 指标 | 状态 | 实际能力 |
++| --- | --- | --- |
++| ≥3 次真实功能迭代 | **已达成** | v1→v6.1 共 8 个版本节点、10+ 次提交 |
++| 每次迭代保留 Git Commit | **已达成（本地）** | `git log --oneline`；尚未 push 到 GitHub |
++| 保存修改前后 Diff | **已达成（本地）** | `git log --stat`、`git diff <A> <B>` |
++| 提供测试结果 | **已达成** | 当前 `115/115`；历史节点 27/27、50/50、73/73、89/89 均在 README 记录 |
++| 说明改进原因及实际效果 | **已达成** | README「Git 迭代记录」每版写明日志证据 → 改动 → 复测；明确不夸大提速幅度 |
++
++### 8.4 用户反馈验收
++
++| 指标 | 状态 | 实际能力 |
++| --- | --- | --- |
++| ≥8 位真实用户 | **未达标** | 当前 0 份 |
++| 有实际使用记录 | **未达标** | 需真实试用；日志可佐证使用行为，但不能替代反馈 |
++| 有反馈问卷或访谈 | **已备模板** | `docs/用户反馈表.md` 8 份空白问卷 + 网页反馈表单（字段完全对齐） |
++| 记录发现的问题 | **待收集** | 网页表单含「遇到的问题」字段，管理端「反馈收集」页可查看明细 |
++| 根据反馈进行改进 | **待收集** | 收齐后再做一轮「反馈驱动」的 Git 迭代，形成闭环 |
++
++---
++
++## 三、架构说明（当前实现 vs SRS 目标）
++
++| 层次 | SRS 第 7 章目标 | 当前 v6.1 实现 | 关系 |
++| --- | --- | --- | --- |
++| 前端 | React + TypeScript + Vite + Tailwind + Electron | 原生 HTML / CSS / JS，三套独立入口 `/`、`/user/`、`/admin/` | 已物理拆分前后端目录与角色入口；未使用框架与桌面壳 |
++| 后端 | Python + FastAPI + SQLAlchemy + Alembic + Pydantic | Node.js 原生 `http`，`server.js` 路由 + `lib/api.js` 业务 | 已前后端分离、模块化；`lib/api.js` 为统一 API 层 |
++| 数据 | SQLite（外键 / 索引 / 事务 / 迁移）+ 本地文件 | `lib/store.js` 零依赖 JSON 原子写（tmp + rename），带文件指纹缓存失效 | **替换 `lib/store.js` 即可迁移**，接口形状不变 |
++| AI | Ollama + 本地 LLM + OCR + RAG | 本地规则引擎 `lib/extractor.js`（`extract_engine: 'local-rules'`） | 未接入模型；「智能助手」页如实写明能力边界，不提供空壳输入框 |
++| 工程 | Git / GitHub / pytest / Playwright / 结构化日志 | Git + 自研 `scripts/smoke-test.js` + JSONL 结构化日志 | 测试与日志能力等价，工具链不同 |
++
++**运行链路**：浏览器 → `server.js`（静态白名单 + 页面级鉴权 + 安全响应头 + 写请求同源校验）→ `lib/auth.js`（scrypt / 会话 / 角色）→ `lib/api.js`（业务接口 / 审计 / 备份）→ `lib/store.js`（JSON 原子读写）；每次请求结束由 `lib/telemetry.js` 落盘并 SSE 广播到管理端。
++
++**安全**：密码 scrypt 加盐哈希、会话只存 token 哈希、学生数据按 `owner_id` 隔离、CSP `script-src 'self'`、`Referrer-Policy: same-origin`、`nosniff`、写请求 `Origin`/`Referer` 同源校验、日志脱敏、备份 SHA256 完整性校验。
++
++---
++
++## 四、数据映射：`data/*.json` → SRS 第 5 章 24 张表
++
++| SRS 表 | 当前对应 | 状态 |
++| --- | --- | --- |
++| `users` | `data/users.json`（含 `display_name`、`role`、`salt` + `password_hash`） | 已覆盖 |
++| `roles` / `user_roles` | 无独立表，角色是 `users.role` 单字段（`student`/`teacher`/`admin`） | 简化，迁移时需拆表 |
++| `notices` | `data/notices.json` | 已覆盖 |
++| `notice_attachments` | 无（v6.1 导入只落 `raw_text` 文本，不存附件文件） | 未实现 |
++| `notice_extractions` | 内嵌在通知记录的提取字段 + `confidence` / `missing_keys` / `extract_engine` | 合并存储 |
++| `notice_versions` | 通知记录的 `version` / `history` / `raw_text`（v6.1 版本追踪） | 合并存储 |
++| `tasks` | 通知记录的 `todos` 数组 | 合并存储，独立待办表未实现 |
++| `reminders` | 不落库；导出 `.ics` 时按 `remind_minutes` 生成 `VALARM` | 部分实现 |
++| `equipment` | `data/equipment.json`（编号 / 型号 / 位置 / 购买日期 / 数量 / 状态 / 备注） | 已覆盖 |
++| `equipment_categories` | 无独立表，分类为 `equipment.category` 字段 | 简化 |
++| `equipment_transactions` | `data/loans.json`（借出 / 部分归还 / 全部归还流水） | 已覆盖 |
++| `inventory_sessions` / `inventory_items` | 无 | 未实现（盘点规划中） |
++| `equipment_incidents` | 无 | 未实现（异常登记规划中） |
++| `wrong_questions` | `data/mistakes.json` | 已覆盖 |
++| `knowledge_points` / `study_records` | 知识点为 `mistakes.knowledge_point` 字段；掌握率由复习记录即时计算 | 简化 / 部分实现 |
++| `chat_sessions` / `chat_messages` | 无 | 未实现（AI 问答规划中） |
++| `audit_logs` | `data/audit.json`（v6.1，动作 / 角色 / 对象 ID / 时间，不含原文） | 已覆盖 |
++| `telemetry_events` | `process_logs/YYYY-MM-DD.jsonl` | 已覆盖（文件而非表） |
++| `backups` | 无持久化记录；导出即快照文件（含 `checksum`） | 设计取舍 |
++| `app_settings` | 无 | 未实现 |
++| （SRS 未列） | `data/sessions.json`、`data/feedback.json` | 会话与反馈为本项目扩展 |
++
++> 迁移提示：以上「合并存储」与「简化」项，是把一份 JSON 拆成多张关系表时的主要工作量；`lib/store.js` 是唯一需要替换的数据访问层。
++
++---
++
++## 五、评分相关的诚实边界
++
++1. **不补造数据**：`data/*.json` 初始全为 `[]`，账号也由你创建；系统不生成示例通知、器材、错题或反馈。
++2. **不补造日志**：历史日期文件缺失就是缺失，日报按当前连续天数判定；冒烟测试日志走隔离目录且跑完即删。
++3. **不伪造反馈**：8 份问卷是空白模板，网页显示 `已收 N/8`（当前 0）。
++4. **不代建 GitHub 远端**：需要你本人创建仓库并授权，本仓库只提供推送指引。
++5. **不假装已实现 AI / SQLite / Electron**：功能地图与本文逐项标注「规划中」/「未交付」。
++
++**优先补齐顺序**：① 连续 7 天真实运行（每天用一次 + `--sync`）→ ② 8 位真实用户反馈 → ③ GitHub 远端并 push → ④ 收齐反馈后做一轮反馈驱动的迭代。SQLite / Electron / 本地模型迁移建议放到阶段验收之后，避免破坏「零依赖即跑」这一当前可验证的优势。
+diff --git "a/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md" "b/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md"
+index 91f816a..6483ab9 100644
+--- "a/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md"
++++ "b/docs/\344\275\277\347\224\250\350\257\264\346\230\216.md"
+@@ -1,7 +1,8 @@
+ # 使用说明 · 校园事务台 CampusDesk
+ 
+-> v5 有三套完全独立的入口：动态封面、用户端、管理端。**所有数据都由你和使用者自己录入，程序不预置任何内容。**
++> 当前版本 **v6.1.0**：三套完全独立的入口（动态封面、用户端、管理端）。**所有数据都由你和使用者自己录入，程序不预置任何内容。**
+ > 2026-11-16 已按你的要求清空原有账号，系统正处于「重新注册」状态；原账号备份在 `.workbuddy/backups/accounts-before-reset-2026-11-16/`，业务数据未被改动。
++> v6.1 新增：5 种文本导入、通知查重与版本追踪、自定义提前提醒、反馈收集进度、业务审计、备份导出 / 校验 / 恢复、日志来源隔离与连续天数自检，详见第四、五、六节。
+ 
+ ---
+ 
+@@ -70,17 +71,17 @@ node server.js
+ | 页面 | 怎么用 |
+ | --- | --- |
+ | **总览看板** | 对齐 SRS `CM-FR-001` 的七项指标：今日待办、即将到期通知、未归还借用、器材库存、近 7 天调用、软件运行状态、最近操作记录；顶部状态条显示版本、运行时长、内存与日志天数 |
+-| **通知与任务** | 四步流程：粘贴**你自己的**通知原文 → 结构化提取（含发布单位、联系方式、所需材料、重要程度）→ **人工审核**（可校正标题与截止日期、勾选确认、也可拒绝）→ 生成待办。支持 `.ics` 日历、Markdown 导出，以及按标题 / 类别 / 状态检索 |
++| **通知与任务** | 四步流程：导入**你自己的**通知原文（手动粘贴 / `.txt` / `.md` / `.csv` / `.json`，可拖放）→ 结构化提取（含发布单位、联系方式、所需材料、重要程度）→ **人工审核**（可校正标题与截止日期、勾选确认、也可拒绝）→ 生成待办。v6.1 增加重复通知识别（只返回相似度，不泄露他人原文）、新旧通知版本比对（字段差异先预览再确认写入 v2）、自定义提前提醒（写入 `.ics` 的 `VALARM`，填 `0` 表示不提醒）；支持按标题 / 类别 / 状态检索 |
+ | **实验器材** | 教师 / 管理员先录入器材档案（编号、型号、位置、购买日期、备注）；任何人可登记借出、部分归还、全部归还，系统自动算可用库存与逾期 |
+ | **错题归档** | 录入题目摘要、学科、知识点、错因，按 1/2/4/7/15/30 天排队复习；新增按学科的知识点掌握率统计 |
+ | **智能助手** | 如实说明当前能力边界：本地规则引擎已上线，本地大模型 / OCR / RAG 问答尚未接入。**此页不提供空壳输入框** |
+ | **我的足迹** | 只显示当前账号的脱敏调用摘要（时间、模块、动作、状态、耗时、错误码），数据来自真实运行日志 |
+-| **使用反馈** | 真实试用后填写；目标 8 位真实同学，系统不会代填 |
++| **使用反馈** | 真实试用后填写，字段与 [`用户反馈表.md`](用户反馈表.md) 的 8 份问卷对齐：实际完成的任务、评分、最有帮助的地方、遇到的问题、建议、是否愿意再用；页面显示 `已收 N/8`，目标 8 位真实同学，系统不会代填 |
+ | **项目与功能地图** | 把 SRS 的 `CM-FR-xxx` 编号与实现状态逐项对照，明确标注「已实现 / 部分实现 / 规划中」 |
+ 
+ > 第一次进去所有列表都是空的，这是**刻意设计**：数据要由你和使用者录入。每个空状态都写明了下一步该做什么。
+ >
+-> **重要**：SRS 中的 PDF / Word / 图片导入、本地 OCR、本地大模型问答属于后续阶段，当前版本只支持手动粘贴文本。页面不会把未实现的功能伪装成可用按钮。
++> **重要**：v6.1 起支持 **5 种文本导入方式**（手动粘贴、`.txt`、`.md`、`.csv`、`.json`），文件在浏览器里用原生 `FileReader` 本地解析、可直接拖放，不上传服务器、不依赖任何第三方库；SRS 中的 PDF / Word / 图片导入、本地 OCR、本地大模型问答仍属后续阶段，在「功能地图」如实标注「规划中」，不提供空壳按钮。
+ 
+ ---
+ 
+@@ -89,16 +90,17 @@ node server.js
+ | 页面 | 内容 |
+ | --- | --- |
+ | **实时运行日志** | SSE 长连接，服务端每次写日志就推送一条，无需刷新。可按模块、状态、关键字筛选，可暂停 / 清空 / 跳转导出。断线自动重连，重连期间用 2 秒轮询补齐 |
+-| **系统健康** | `CM-FR-509` 六项健康检查（服务、数据目录、当日日志、7 天覆盖、错误率、SSE 订阅）+ 实时内存与运行时长，全部由进程当前状态计算 |
++| **系统健康** | `CM-FR-509` 六项健康检查（服务、数据目录、当日日志、7 天覆盖、错误率、SSE 订阅）+ 实时内存与运行时长，全部由进程当前状态计算；v6.1 起「7 天覆盖」按**当前连续天数**判定，并标明日志来源目录 |
+ | **日志分析** | 按模块 / 动作 / 角色 / 错误码聚合，最近报错、按日期查看历史明细；一键生成当日日报 |
+ | **账号与角色** | 创建 / 停用 / 启用 / 重置密码，附三角色权限矩阵（与服务端 `PERMISSIONS` 一致） |
+-| **数据总览** | 各数据集条数、服务信息、角色分布；**只看条数，不展示业务内容** |
+-| **备份与导出** | `CM-FR-507` 按自然日导出 JSON / CSV 日志（真实下载）；业务数据条数核对 + 可执行的本机备份命令；日报文件清单 |
++| **数据总览** | 各数据集条数、服务信息、角色分布；**只看条数，不展示业务内容**；v6.1 增加业务审计表（谁 / 何时 / 动作 / 对象 ID，不含原文） |
++| **反馈收集** | v6.1 新增：`已收 N/8` 槽位进度与反馈明细，字段与 8 份问卷一致；不代填、不伪造 |
++| **备份与导出** | `CM-FR-507` 按自然日导出 JSON / CSV 日志（真实下载）；v6.1 起支持**业务数据快照导出 / 校验 / 恢复**（见下方备份说明）；附日报文件清单 |
+ | **版本与规划** | 实时读取 `git log` 的迭代时间线 + SRS 2.4 管理员职责对照，AI 模型管理等未实现项标注「规划中」 |
+ 
+ 日志里只有时间、角色、模块、动作、状态、耗时、错误码和脱敏特征（长度、条数等），**不含**通知原文、姓名、学号、题目、反馈正文、账号或密码。导出接口同样要求管理员会话，不能匿名下载。
+ 
+-> **备份说明**：页面提供命令与条数核对，但不会自动复制 `data/`——按「一切数据由我添加」的约定，会产生磁盘副作用的动作由你显式执行。
++> **备份说明（v6.1）**：「数据总览 / 备份」页可导出带 SHA256 校验和的业务数据快照（自己保存到本机），也可把快照贴回去做**完整性校验**；校验不通过会明确拒绝恢复。恢复必须勾选显式确认，且只恢复通知、器材、借还、错题、反馈等业务数据，**不覆盖账号与会话**。程序不会自动在磁盘上生成副本。
+ 
+ ---
+ 
+@@ -113,6 +115,13 @@ git push                              # 需要提交到 GitHub 时再执行
+ 
+ 日志按自然日写入 `process_logs/YYYY-MM-DD.jsonl`。连续使用 7 天后，目录里自然就有 7 个日期文件 + 7 份日报。**程序不会补造历史日志**，这正是作业「防摆拍」的要求。
+ 
++**v6.1 的两处口径修正**：
++
++- 日报新增「连续运行达标自检」，按**当前连续天数**（不是累计天数）判定，并列出断档明细、历史最长连续与达标日期；系统健康页、总览看板同步显示 `连续 x / 7 天`。日报是生成时刻的**静态快照**，此后新产生的访问不会回写，次日或收工前重新运行会覆盖为最新口径。
++- 日志新增 `source` 字段：`live`（真实使用）、`legacy`（v6.1 前的历史记录，错误率含测试噪声）、`smoke`（测试，写入 `process_logs/__smoke__/` 且跑完即删）。冒烟测试不再把故意触发的报错混进真实 telemetry。
++
++> ⚠️ **当前实际状态**：累计 5 天（11-11、12、13、16、17），11-14 / 15 断档，**当前连续仅 2 天**；需从 11-16 起连续真实使用到 **11-22** 才达标。
++
+ ---
+ 
+ ## 七、常见问题
+@@ -155,12 +164,23 @@ git push                              # 需要提交到 GitHub 时再执行
+ **Q：怎么确认没有预置数据？**
+ 打开管理后台 → 「数据总览」，业务数据集条数应全为 0；或查看 `data/*.json`，内容都应为 `[]`。
+ 
++**Q：导入文件会上传到服务器吗？支持哪些格式？**
++不会。`.txt` / `.md` / `.csv` / `.json` 由浏览器原生 `FileReader` 在你本机读成文本，再按普通粘贴文本走同一套解析接口；可直接拖到导入区。PDF / Word / 图片需要 OCR 与对应解析库，尚未实现，页面标注「规划中」。CSV 会取文本列拼接，JSON 会尝试读取常见文本字段，解析结果一律以人工审核为准。
++
++**Q：备份恢复会覆盖我的账号吗？**
++不会。恢复只覆盖通知、器材、借还、错题、反馈等业务数据，`users` / `sessions` 不参与。快照带 SHA256 校验和，被改动过会校验失败并拒绝恢复；恢复前必须勾选显式确认。
++
++**Q：提示「请求来源与本站不一致，已拒绝」？**
++这是 v6.1 加的同源校验，防止别的网页替你提交写请求。正常从本站页面操作不会触发；若用脚本或代理访问导致 `Origin` / `Referer` 与 `Host` 不一致，请从服务实际打印的地址打开页面再操作。
++
+ ---
+ 
+ ## 八、验证命令
+ 
+ ```bash
+-node scripts/smoke-test.js   # 73 项断言，独立端口 5199 + 隔离数据目录，跑完自动清理
++node scripts/smoke-test.js   # 115 项断言，独立端口 5199 + 隔离数据目录 + 隔离日志目录，跑完自动清理
+ ```
+ 
+-冒烟测试会创建临时的管理员/学生/教师账号和测试记录，但**只写在 `data/__smoke__/` 并在结束时删除**，不会往你的日常数据里加任何东西。产生的运行日志是真实请求记录。
++冒烟测试会创建临时的管理员 / 学生 / 教师账号和测试记录，但**只写在 `data/__smoke__/` 并在结束时删除**，不会往你的日常数据里加任何东西。v6.1 起它产生的运行日志也写进 `process_logs/__smoke__/` 并在结束时删除，**不再把测试调用与故意触发的报错混进真实 telemetry**；测试还含一条断言专门核对「主日志中没有 smoke 记录」。
++
++如需核对交付物逐项状态，见 [`交付物对照.md`](交付物对照.md)。
+diff --git a/lib/api.js b/lib/api.js
+index 09cac1a..6ea256c 100644
+--- a/lib/api.js
++++ b/lib/api.js
+@@ -8,6 +8,7 @@
+  */
+ const path = require('path');
+ const fs = require('fs');
++const crypto = require('crypto');
+ const { execFile } = require('child_process');
+ const store = require('./store');
+ const extractor = require('./extractor');
+@@ -15,6 +16,11 @@ const telemetry = require('./telemetry');
+ const auth = require('./auth');
+ 
+ const REVIEW_STAGES = [1, 2, 4, 7, 15, 30]; // 艾宾浩斯式复习间隔（天）
++// CM-FR-101：5 种文本导入方式。PDF / Word / 图片需 OCR 与解析库，不伪装成可用。
++const IMPORT_TYPES = ['paste', 'txt', 'md', 'csv', 'json'];
++// 版本追踪比对的结构化字段（CM-FR-110）
++const VERSION_FIELDS = ['title', 'category', 'event_date', 'event_time', 'location',
++  'deadline', 'audience', 'todos', 'materials', 'issuer', 'importance'];
+ 
+ function today() { return telemetry.localDay(); }
+ function p2(n) { return String(n).padStart(2, '0'); }
+@@ -34,13 +40,114 @@ function requireField(obj, key) {
+   return String(obj[key]).trim();
+ }
+ 
++/* --------------------- 业务审计（SRS 4.3 / CM-FR-210） --------------------- */
++/** 只记谁、何时、做了什么、作用于哪个对象；绝不记原文、姓名、题目或反馈正文 */
++function writeAudit(ctx, action, targetType, targetId, extra) {
++  try {
++    store.update('audit', (arr) => [...arr.slice(-499), {
++      id: store.uid('au'),
++      at: new Date().toISOString(),
++      actor_id: ctx.user ? ctx.user.id : null,
++      actor_role: ctx.user ? ctx.user.role : 'anonymous',
++      action: String(action).slice(0, 40),
++      target_type: String(targetType).slice(0, 24),
++      target_id: String(targetId || '').slice(0, 40),
++      meta: extra && typeof extra === 'object' ? extra : {},
++    }]);
++  } catch (_) { /* 审计失败不阻断业务，但会留下 telemetry 异常 */ }
++}
++
++/* --------------------- 查重与版本比对（CM-FR-109 / 110） --------------------- */
++function compact(s) {
++  return String(s || '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
++}
++/** 3-gram Jaccard 相似度：纯本地计算，不需要任何模型或依赖 */
++function similarity(a, b) {
++  const A = compact(a), B = compact(b);
++  if (!A || !B) return 0;
++  if (A === B) return 1;
++  const grams = (s) => {
++    const set = new Set();
++    for (let i = 0; i <= s.length - 3; i++) set.add(s.slice(i, i + 3));
++    return set;
++  };
++  const ga = grams(A), gb = grams(B);
++  if (!ga.size || !gb.size) return (A.includes(B) || B.includes(A)) ? 0.8 : 0;
++  let inter = 0;
++  for (const g of ga) if (gb.has(g)) inter++;
++  return inter / (ga.size + gb.size - inter);
++}
++/** 只返回相似度与序号，不返回他人通知的标题或原文 */
++function findDuplicates(text, excludeId) {
++  const hits = [];
++  for (const n of store.get('notices')) {
++    if (n.id === excludeId || !n.raw_text) continue;
++    const s = similarity(text, n.raw_text);
++    if (s >= 0.62) hits.push({ similarity: Math.round(s * 100), created_at: n.created_at });
++  }
++  return hits.sort((a, b) => b.similarity - a.similarity).slice(0, 3);
++}
++function fieldValue(v) {
++  return Array.isArray(v) ? v.join('、') : String(v === undefined || v === null ? '' : v);
++}
++function diffNotice(oldN, nextN) {
++  const changes = [];
++  for (const k of VERSION_FIELDS) {
++    const before = fieldValue(oldN[k]), after = fieldValue(nextN[k]);
++    if (before !== after) changes.push({ field: k, from: before || '（空）', to: after || '（空）' });
++  }
++  return changes;
++}
++
++/* --------------------- 备份快照与完整性校验（SRS 4.3） --------------------- */
++const BACKUP_DATASETS = ['notices', 'equipment', 'loans', 'mistakes', 'feedback', 'audit'];
++function backupPayload() {
++  const datasets = {};
++  for (const name of BACKUP_DATASETS) datasets[name] = store.get(name);
++  const body = {
++    format: 'campusdesk-backup',
++    version: telemetry.APP_VERSION,
++    exported_at: new Date().toISOString(),
++    datasets,
++  };
++  body.checksum = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
++  return body;
++}
++/** 只校验、不写入：checksum 用导出时的原始字段顺序重算 */
++function verifyBackup(input) {
++  let obj = input;
++  if (typeof input === 'string') {
++    try { obj = JSON.parse(input); } catch (_) { throw fail('INVALID_BACKUP', '备份文件不是合法 JSON'); }
++  }
++  if (!obj || obj.format !== 'campusdesk-backup' || !obj.datasets || !obj.checksum) {
++    throw fail('INVALID_BACKUP', '备份文件格式不正确');
++  }
++  const { checksum, ...rest } = obj;
++  const calc = crypto.createHash('sha256').update(JSON.stringify(rest)).digest('hex');
++  const counts = {};
++  for (const [k, v] of Object.entries(obj.datasets || {})) {
++    if (!BACKUP_DATASETS.includes(k) || !Array.isArray(v)) throw fail('INVALID_BACKUP', '备份包含未知数据集: ' + k);
++    counts[k] = v.length;
++  }
++  const problems = [];
++  if (calc !== checksum) problems.push('checksum 不一致，文件可能被修改或损坏');
++  return {
++    ok: problems.length === 0,
++    checksum_matched: calc === checksum,
++    expected_checksum: checksum, computed_checksum: calc,
++    datasets: counts, exported_at: obj.exported_at, version: obj.version,
++    problems,
++  };
++}
++
+ /* ------------------------------ 角色与权限 ------------------------------ */
+ const PERMISSIONS = {
+   student: [
+     'notice.parse', 'notice.save', 'notice.list', 'notice.toggle', 'notice.ics',
++    'notice.revise', 'notice.preview',
+     'equipment.list', 'loan.create', 'loan.return', 'loan.list',
+     'mistake.list', 'mistake.add', 'mistake.review',
+-    'feedback.add', 'dashboard', 'bootstrap',
++    'feedback.add', 'feedback.progress', 'dashboard', 'bootstrap',
+   ],
+   teacher: [],
+   admin: ['*'],
+@@ -178,6 +285,7 @@ function dashboard(eqSnapshot, user) {
+       uptime_s: Math.round(process.uptime()),
+       rss_mb: Math.round(process.memoryUsage().rss / 1048576 * 10) / 10,
+       log_days: telemetry.listDays().length,
++      streak_days: telemetry.streakInfo().current_streak,
+       status: 'ok',
+     },
+     telemetry: {
+@@ -256,6 +364,8 @@ function healthInfo() {
+     node: process.version, uptime_s: Math.round(process.uptime()),
+     log_days: telemetry.listDays().length, today: today(),
+     initialized: auth.userCount() > 0,
++    log_source: telemetry.LOG_SOURCE,
++    log_dir: path.relative(path.join(__dirname, '..'), telemetry.LOG_DIR),
+   };
+ }
+ function resourceInfo() {
+@@ -271,16 +381,19 @@ function resourceInfo() {
+ }
+ /** 健康检查项全部由真实运行状态计算，没有任何写死的成功结论 */
+ function healthChecks(agg) {
+-  const days = telemetry.listDays();
++  const streak = telemetry.streakInfo();
+   const total = agg.total_calls || 0;
+   const errors = agg.by_status ? (agg.by_status.error || 0) : 0;
+   const rate = total ? errors / total : 0;
+   const todayFile = path.join(telemetry.LOG_DIR, today() + '.jsonl');
+   return [
+     { key: 'service', label: 'HTTP 服务', ok: true, detail: '进程正常运行 · ' + process.version },
+-    { key: 'storage', label: '业务数据目录', ok: fs.existsSync(path.join(__dirname, '..', 'data')), detail: 'data/ 可读写，文件指纹缓存生效' },
++    { key: 'storage', label: '业务数据目录', ok: fs.existsSync(store.DATA_DIR), detail: 'data/ 可读写，文件指纹缓存生效' },
+     { key: 'telemetry', label: '当日日志写入', ok: fs.existsSync(todayFile), detail: 'process_logs/' + today() + '.jsonl' },
+-    { key: 'coverage', label: '连续运行覆盖', ok: days.length >= 7, detail: days.length + ' / 7 天' + (days.length >= 7 ? '（已达标）' : '（继续每日使用并同步）') },
++    // 按「连续」而非「累计」判定：11-11/12/13 + 11-16/17 累计 5 天，但最长连续仅 3 天
++    { key: 'coverage', label: '连续运行覆盖', ok: streak.target_met,
++      detail: '当前连续 ' + streak.current_streak + ' / 7 天（历史最长 ' + streak.longest_streak + ' 天，累计 ' +
++        streak.days_count + ' 天）' + (streak.target_met ? '（已达标）' : (streak.remaining_days ? ' · 还需连续到 ' + streak.target_date : '')) },
+     { key: 'error_rate', label: '近 7 天错误率', ok: rate < 0.1, detail: (rate * 100).toFixed(1) + '% · ' + errors + ' 次报错 / ' + total + ' 次调用' },
+     { key: 'stream', label: '实时日志通道', ok: true, detail: 'SSE 订阅者 ' + telemetry.subscriberCount() + ' 个 · 断线轮询兜底可用' },
+   ];
+@@ -324,7 +437,9 @@ async function generateReport() {
+ async function adminRoutes(ctx) {
+   requireRole(ctx, ['admin']);
+   const { method, query, body, user } = ctx;
+-  const action = ctx.pathname.replace(/^\/api\//, '').split('/').filter(Boolean)[1] || 'overview';
++  const seg = ctx.pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
++  const action = seg[1] || 'overview';
++  const sub = seg[2] || '';
+ 
+   if (action === 'overview' && method === 'GET') {
+     const datasets = {};
+@@ -342,14 +457,59 @@ async function adminRoutes(ctx) {
+       git_commits: await gitCommits(),
+       telemetry: agg,
+       all_days: telemetry.listDays(),
++      streak: telemetry.streakInfo(),
++      feedback: { collected: store.get('feedback').length, target: 8 },
+     }, meta: { datasets: store.NAMES.length } };
+   }
++
++  /* ---------- 反馈收集明细 / 业务审计 / 备份（仅管理员） ---------- */
++  if (action === 'feedback' && method === 'GET') {
++    const items = store.get('feedback');
++    return { status: 200, data: { items, collected: items.length, target: 8 },
++      meta: { collected: items.length } };
++  }
++  if (action === 'audit' && method === 'GET') {
++    const rows = store.get('audit').slice(-120).reverse();
++    return { status: 200, data: { items: rows, scope: 'desensitized' },
++      meta: { row_count: rows.length } };
++  }
++  if (action === 'backup' && sub === '' && method === 'GET') {
++    const payload = backupPayload();
++    writeAudit(ctx, 'backup.export', 'snapshot', '', { files: BACKUP_DATASETS.length });
++    return { status: 200, raw: {
++      body: JSON.stringify(payload, null, 2),
++      headers: {
++        'Content-Type': 'application/json; charset=utf-8',
++        'Content-Disposition': 'attachment; filename="campusdesk-backup-' + today() + '.json"',
++        'X-Backup-Checksum': payload.checksum,
++      },
++    }, meta: { exported: 1 } };
++  }
++  if (action === 'backup' && sub === 'verify' && method === 'POST') {
++    const result = verifyBackup(body.backup);
++    return { status: 200, data: result, meta: { ok: result.ok ? 1 : 0 } };
++  }
++  if (action === 'backup' && sub === 'restore' && method === 'POST') {
++    if (body.confirm !== 'RESTORE') throw fail('RESTORE_NOT_CONFIRMED', '恢复必须显式确认', 400);
++    const result = verifyBackup(body.backup);
++    if (!result.ok) throw fail('BACKUP_CHECKSUM_MISMATCH', '备份校验未通过，已拒绝恢复', 400);
++    const incoming = typeof body.backup === 'string' ? JSON.parse(body.backup) : body.backup;
++    for (const name of BACKUP_DATASETS) {
++      if (name === 'audit' || !Array.isArray(incoming.datasets[name])) continue;
++      store.set(name, incoming.datasets[name]);
++    }
++    writeAudit(ctx, 'backup.restore', 'snapshot', '', { checksum_ok: 1 });
++    return { status: 200, data: { ok: true, restored: Object.keys(result.datasets).length,
++      note: '账号与会话不在恢复范围内，避免把自己锁在门外' },
++      meta: { restored: 1 } };
++  }
++
+   if (action === 'export' && method === 'GET') {
+     const day = query.get('date') || today();
+     const format = query.get('format') === 'csv' ? 'csv' : 'json';
+     const rows = telemetry.readDay(day);
+     if (format === 'csv') {
+-      const cols = ['ts', 'day', 'app_version', 'session', 'role', 'module', 'action', 'status', 'duration_ms', 'error_code'];
++      const cols = ['ts', 'day', 'app_version', 'source', 'session', 'role', 'module', 'action', 'status', 'duration_ms', 'error_code'];
+       const q = (v) => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
+       const body = '\uFEFF' + [cols.join(','), ...rows.map((r) => cols.map((c) => q(r[c])).join(','))].join('\r\n');
+       return { status: 200, raw: { body, headers: {
+@@ -376,15 +536,20 @@ async function adminRoutes(ctx) {
+       username: body.username, password: body.password,
+       role: body.role, display_name: body.display_name, created_by: user.id,
+     });
+-    return { status: 201, data: created, meta: { role: created.role } };
++    writeAudit(ctx, 'user.create', 'account', created.id, { role: created.role });
++    return { status: 201, data: created, meta: { role: created.role, audited: 1 } };
+   }
+   if (action === 'active' && method === 'POST') {
+     const id = requireField(body, 'id');
+-    return { status: 200, data: auth.setActive(id, body.active !== false, user.id), meta: {} };
++    const updated = auth.setActive(id, body.active !== false, user.id);
++    writeAudit(ctx, 'user.active', 'account', id, { active: body.active !== false ? 1 : 0 });
++    return { status: 200, data: updated, meta: { audited: 1 } };
+   }
+   if (action === 'password' && method === 'POST') {
+     const id = requireField(body, 'id');
+-    return { status: 200, data: auth.resetPassword(id, body.new_password), meta: {} };
++    const updated = auth.resetPassword(id, body.new_password);
++    writeAudit(ctx, 'user.password', 'account', id, {});
++    return { status: 200, data: updated, meta: { audited: 1 } };
+   }
+   if (action === 'summary' && method === 'GET') {
+     const n = Math.min(30, Math.max(1, Number(query.get('days') || 7)));
+@@ -426,7 +591,10 @@ async function route(ctx, eqOnce) {
+       node: process.version, uptime_s: Math.round(process.uptime()),
+       log_days: telemetry.listDays().length, today: today(),
+       initialized: auth.userCount() > 0,
+-    }, meta: { log_days: telemetry.listDays().length } };
++      log_source: telemetry.LOG_SOURCE,
++      log_dir: path.relative(path.join(__dirname, '..'), telemetry.LOG_DIR),
++      streak: telemetry.streakInfo().current_streak,
++    }, meta: { log_days: telemetry.listDays().length, source: telemetry.LOG_SOURCE } };
+   }
+ 
+   if (group === 'auth') return authRoutes(ctx);
+@@ -464,7 +632,8 @@ async function route(ctx, eqOnce) {
+       feedback: can(user, 'feedback.list') ? store.get('feedback') : [],
+       version: telemetry.APP_VERSION,
+       today: today(),
+-      empty: store.NAMES.filter((n) => n !== 'users' && n !== 'sessions')
++      // 账号 / 会话 / 审计属于系统痕迹，不计入「业务数据是否为空」
++      empty: store.NAMES.filter((n) => !store.SYSTEM_NAMES.includes(n))
+         .every((n) => store.get(n).length === 0),
+     }, meta: { datasets: store.NAMES.length, role: user.role } };
+   }
+@@ -480,7 +649,21 @@ async function route(ctx, eqOnce) {
+       requirePerm(ctx, 'notice.parse');
+       const text = body.text || '';
+       if (!String(text).trim()) throw fail('EMPTY_NOTICE', '请先粘贴通知内容');
+-      const notice = extractor.extract(text, { id: store.uid('nt'), source: 'manual' });
++      const importType = IMPORT_TYPES.includes(body.import_type) ? body.import_type : 'paste';
++      const notice = extractor.extract(text, { id: store.uid('nt'), source: importType });
++      // CM-FR-109：只给相似度与数量提示，不返回他人通知标题或原文，也不自动拒绝
++      const dup = findDuplicates(text);
++      notice.duplicate_hint = {
++        detected: dup.length > 0, count: dup.length,
++        top_similarity: dup.length ? dup[0].similarity : 0,
++      };
++      notice.raw_text = text;
++      notice.source_fingerprint = crypto.createHash('sha256')
++        .update(extractor.normalize(text)).digest('hex').slice(0, 12);
++      notice.import_type = importType;
++      notice.remind_minutes = 30; // CM-FR-107 默认值，人工审核时可改
++      notice.version = 1;
++      notice.history = [];
+       const FIELD_CODE = { event_date: 'date', event_time: 'time', location: 'loc', audience: 'aud', deadline: 'ddl' };
+       const missing = Object.keys(FIELD_CODE).filter((k) =>
+         !notice[k] || (Array.isArray(notice[k]) && notice[k].length === 0));
+@@ -493,22 +676,92 @@ async function route(ctx, eqOnce) {
+         missing_keys: missing.map((k) => FIELD_CODE[k]).join(',') || 'none',
+         extra_field_count: [notice.issuer, notice.contact.length, notice.materials.length].filter(Boolean).length,
+         importance_code: { 紧急: 3, 重要: 2, 普通: 1 }[notice.importance] || 1,
++        import_type: importType, duplicate_count: dup.length,
+       } };
+     }
+     if (action === 'save' && method === 'POST') {
+       requirePerm(ctx, 'notice.save');
+       const n = body.notice;
+       if (!n || !n.title) throw fail('INVALID_NOTICE', '没有可保存的结构化结果');
++      const raw = String(n.raw_text || '').slice(0, 20000);
++      const remind = Math.max(0, Math.min(43200, Number(n.remind_minutes ?? 30) || 0));
++      const dup = raw ? findDuplicates(raw) : [];
+       const item = {
+         ...n,
+         ...stamp(user),
+         id: n.id || store.uid('nt'),
+         created_at: n.created_at || new Date().toISOString(),
+         done: false,
++        raw_text: raw,
++        source_fingerprint: n.source_fingerprint || crypto.createHash('sha256')
++          .update(extractor.normalize(raw)).digest('hex').slice(0, 12),
++        import_type: IMPORT_TYPES.includes(n.import_type) ? n.import_type : 'paste',
++        remind_minutes: remind,
++        version: Number(n.version) || 1,
++        history: Array.isArray(n.history) ? n.history : [],
++        duplicate_hint: { detected: dup.length > 0, count: dup.length,
++          top_similarity: dup.length ? dup[0].similarity : 0 },
+       };
++      item.ics = extractor.buildICS(item, remind);
+       store.update('notices', (arr) => [item, ...arr]);
++      writeAudit(ctx, 'notice.save', 'notice', item.id,
++        { version: item.version, todo_count: (item.todos || []).length, duplicate_count: dup.length });
+       return { status: 200, data: item,
+-        meta: { todo_count: (item.todos || []).length, confidence: item.confidence || 0 } };
++        meta: { todo_count: (item.todos || []).length, confidence: item.confidence || 0,
++          duplicate_count: dup.length, import_type: item.import_type, audited: 1 } };
++    }
++    /** CM-FR-110：贴入新版本原文，先预览字段差异，apply=true 才写入 */
++    if (action === 'revise' && method === 'POST') {
++      requirePerm(ctx, 'notice.revise');
++      const id = requireField(body, 'id');
++      const text = String(body.text || '').trim();
++      if (!text) throw fail('EMPTY_NOTICE', '请粘贴新版本通知原文');
++      const target = store.get('notices').find((x) => x.id === id);
++      if (!target) throw fail('NOT_FOUND', '未找到该通知', 404);
++      assertOwner(target, user);
++      const fresh = extractor.extract(text, { id: target.id, source: 'revise' });
++      const remind = Math.max(0, Math.min(43200, Number(body.remind_minutes ?? target.remind_minutes ?? 30) || 0));
++      const next = {
++        ...fresh,
++        id: target.id,
++        owner_id: target.owner_id, owner_name: target.owner_name, owner_role: target.owner_role,
++        created_at: target.created_at, done: !!target.done,
++        reviewed: true, reviewed_at: new Date().toISOString(),
++        raw_text: text.slice(0, 20000),
++        source_fingerprint: crypto.createHash('sha256')
++          .update(extractor.normalize(text)).digest('hex').slice(0, 12),
++        import_type: 'paste',
++        remind_minutes: remind,
++        version: (Number(target.version) || 1) + 1,
++        duplicate_hint: { detected: false, count: 0, top_similarity: 0 },
++      };
++      const changes = diffNotice(target, next);
++      const snapshot = {};
++      for (const k of VERSION_FIELDS) snapshot[k] = target[k];
++      next.history = [...(target.history || []), {
++        version: Number(target.version) || 1,
++        at: new Date().toISOString(), snapshot, changes,
++      }].slice(-20);
++      next.ics = extractor.buildICS(next, remind);
++      if (body.apply !== true) {
++        return { status: 200, data: { notice: next, changes, applied: false },
++          meta: { change_count: changes.length, preview: 1 } };
++      }
++      store.update('notices', (arr) => arr.map((x) => (x.id === id ? next : x)));
++      writeAudit(ctx, 'notice.revise', 'notice', id,
++        { version: next.version, change_count: changes.length });
++      return { status: 200, data: { notice: next, changes, applied: true },
++        meta: { change_count: changes.length, version: next.version, audited: 1 } };
++    }
++    /** 人工审核时预览 .ics（带自定义提前提醒），不写任何业务数据 */
++    if (action === 'preview' && method === 'POST') {
++      requirePerm(ctx, 'notice.preview');
++      const n = body.notice;
++      if (!n || !n.title) throw fail('INVALID_NOTICE', '没有可预览的通知');
++      return { status: 200, data: {
++        ics: extractor.buildICS(n, body.remind_minutes),
++        remind_minutes: Math.max(0, Math.min(43200, Number(body.remind_minutes ?? 30) || 0)),
++      }, meta: { preview: 1 } };
+     }
+     if (action === 'list') {
+       requirePerm(ctx, 'notice.list');
+@@ -528,7 +781,8 @@ async function route(ctx, eqOnce) {
+         return { ...n, done: !n.done };
+       }));
+       if (!found) throw fail('NOT_FOUND', '未找到该待办', 404);
+-      return { status: 200, data: { ok: true }, meta: {} };
++      writeAudit(ctx, 'notice.toggle', 'notice', id, { done: !target.done ? 1 : 0 });
++      return { status: 200, data: { ok: true }, meta: { audited: 1 } };
+     }
+     if (action === 'delete' && method === 'DELETE') {
+       requirePerm(ctx, 'notice.delete');
+@@ -536,21 +790,21 @@ async function route(ctx, eqOnce) {
+       const target = store.get('notices').find((n) => n.id === id);
+       if (target) assertOwner(target, user);
+       store.update('notices', (arr) => arr.filter((n) => n.id !== id));
+-      return { status: 200, data: { ok: true }, meta: {} };
++      writeAudit(ctx, 'notice.delete', 'notice', id, {});
++      return { status: 200, data: { ok: true }, meta: { audited: 1 } };
+     }
+     if (action === 'ics') {
+       requirePerm(ctx, 'notice.ics');
+       const id = query.get('id');
+       const n = scoped('notices', user).find((x) => x.id === id);
+       if (!n) throw fail('NOT_FOUND', '未找到该通知', 404);
+-      const ics = n.ics || extractor.buildICS(n);
+       return { status: 200, raw: {
+-        body: ics,
++        body: extractor.buildICS(n, n.remind_minutes),
+         headers: {
+           'Content-Type': 'text/calendar; charset=utf-8',
+           'Content-Disposition': 'attachment; filename="campus-notice.ics"',
+         },
+-      }, meta: { has_time: n.event_time ? 1 : 0 } };
++      }, meta: { has_time: n.event_time ? 1 : 0, remind_minutes: n.remind_minutes || 0 } };
+     }
+   }
+ 
+@@ -579,14 +833,16 @@ async function route(ctx, eqOnce) {
+         created_at: new Date().toISOString(),
+       };
+       store.update('equipment', (arr) => [...arr, item]);
+-      return { status: 200, data: eqOnce(), meta: { total } };
++      writeAudit(ctx, 'equipment.add', 'equipment', item.id, { total });
++      return { status: 200, data: eqOnce(), meta: { total, audited: 1 } };
+     }
+     if (action === 'delete' && method === 'DELETE') {
+       requirePerm(ctx, 'equipment.delete');
+       const id = requireField(body, 'id');
+       if (outstanding(id) > 0) throw fail('HAS_LOAN', '该器材尚有未归还借用，不能删除');
+       store.update('equipment', (arr) => arr.filter((i) => i.id !== id));
+-      return { status: 200, data: eqOnce(), meta: {} };
++      writeAudit(ctx, 'equipment.delete', 'equipment', id, {});
++      return { status: 200, data: eqOnce(), meta: { audited: 1 } };
+     }
+   }
+ 
+@@ -612,7 +868,8 @@ async function route(ctx, eqOnce) {
+         returned_at: null, status: 'active',
+       };
+       store.update('loans', (arr) => [loan, ...arr]);
+-      return { status: 200, data: eqOnce(), meta: { qty, available_before: found.available } };
++      writeAudit(ctx, 'loan.create', 'loan', loan.id, { qty });
++      return { status: 200, data: eqOnce(), meta: { qty, available_before: found.available, audited: 1 } };
+     }
+     if (action === 'return' && method === 'POST') {
+       requirePerm(ctx, 'loan.return');
+@@ -632,7 +889,8 @@ async function route(ctx, eqOnce) {
+         return target;
+       }));
+       if (!target) throw fail('NOT_FOUND', '借用记录不存在或已全部归还', 404);
+-      return { status: 200, data: eqOnce(), meta: { partial: target.status === 'returned' ? 0 : 1 } };
++      writeAudit(ctx, 'loan.return', 'loan', id, { back });
++      return { status: 200, data: eqOnce(), meta: { partial: target.status === 'returned' ? 0 : 1, audited: 1 } };
+     }
+     if (action === 'list') {
+       requirePerm(ctx, 'loan.list');
+@@ -665,7 +923,8 @@ async function route(ctx, eqOnce) {
+         history: [],
+       };
+       store.update('mistakes', (arr) => [item, ...arr]);
+-      return { status: 200, data: mistakeView(item), meta: { stage: 0 } };
++      writeAudit(ctx, 'mistake.add', 'mistake', item.id, { subject: item.subject });
++      return { status: 200, data: mistakeView(item), meta: { stage: 0, audited: 1 } };
+     }
+     if (action === 'review' && method === 'POST') {
+       requirePerm(ctx, 'mistake.review');
+@@ -688,8 +947,9 @@ async function route(ctx, eqOnce) {
+         return updated;
+       }));
+       if (!updated) throw fail('NOT_FOUND', '错题不存在', 404);
++      writeAudit(ctx, 'mistake.review', 'mistake', id, { stage: updated.stage });
+       return { status: 200, data: mistakeView(updated),
+-        meta: { stage: updated.stage, result: ok ? 'ok' : 'again' } };
++        meta: { stage: updated.stage, result: ok ? 'ok' : 'again', audited: 1 } };
+     }
+     if (action === 'delete' && method === 'DELETE') {
+       requirePerm(ctx, 'mistake.delete');
+@@ -697,12 +957,20 @@ async function route(ctx, eqOnce) {
+       const target = store.get('mistakes').find((m) => m.id === id);
+       if (target) assertOwner(target, user);
+       store.update('mistakes', (arr) => arr.filter((m) => m.id !== id));
+-      return { status: 200, data: { ok: true }, meta: {} };
++      writeAudit(ctx, 'mistake.delete', 'mistake', id, {});
++      return { status: 200, data: { ok: true }, meta: { audited: 1 } };
+     }
+   }
+ 
+-  /* ---------- 使用反馈 ---------- */
++  /* ---------- 使用反馈（对齐 docs/用户反馈表.md 的 8 份问卷字段） ---------- */
+   if (group === 'feedback') {
++    /** 收集进度对任何登录用户可见：只有数量，不含任何反馈正文 */
++    if (action === 'progress' && method === 'GET') {
++      requirePerm(ctx, 'feedback.progress');
++      const items = store.get('feedback');
++      return { status: 200, data: { collected: items.length, target: 8,
++        reached: items.length >= 8 }, meta: { collected: items.length } };
++    }
+     if (action === 'list') {
+       requirePerm(ctx, 'feedback.list');
+       return { status: 200, data: { items: store.get('feedback'), target: 8 },
+@@ -718,13 +986,17 @@ async function route(ctx, eqOnce) {
+         role: role.slice(0, 20),
+         module: String(body.module || '整体').slice(0, 20),
+         score,
++        task_done: String(body.task_done || '').slice(0, 160),
++        problem: String(body.problem || '').slice(0, 160),
+         liked: String(body.liked || '').slice(0, 160),
+         suggestion: String(body.suggestion || '').slice(0, 160),
++        reuse: ['愿意', '不确定', '不愿意'].includes(body.reuse) ? body.reuse : '',
+         created_at: new Date().toISOString(),
+       };
+       store.update('feedback', (arr) => [item, ...arr]);
++      writeAudit(ctx, 'feedback.add', 'feedback', item.id, { score });
+       return { status: 200, data: item,
+-        meta: { score, collected: store.get('feedback').length } };
++        meta: { score, collected: store.get('feedback').length, audited: 1 } };
+     }
+   }
+ 
+diff --git a/lib/extractor.js b/lib/extractor.js
+index d1da074..d810d78 100644
+--- a/lib/extractor.js
++++ b/lib/extractor.js
+@@ -236,7 +236,7 @@ function icsStamp(iso, time) {
+   return dt.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+ }
+ 
+-function buildICS(notice) {
++function buildICS(notice, remindMinutes) {
+   const lines = [
+     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//CampusDesk//NoticeExtractor//CN',
+     'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+@@ -254,7 +254,14 @@ function buildICS(notice) {
+   lines.push('SUMMARY:' + esc(notice.title));
+   lines.push('DESCRIPTION:' + esc('分类:' + notice.category + ' | 对象:' + (notice.audience || []).join('、') + ' | 由 CampusDesk 自动提取'));
+   if (notice.location) lines.push('LOCATION:' + esc(notice.location));
+-  lines.push('BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', 'DESCRIPTION:校园事务提醒', 'END:VALARM');
++  // CM-FR-107：提前提醒时长由使用者在人工审核时设定，0 表示不提醒
++  const mins = Math.max(0, Math.min(60 * 24 * 30, Number(remindMinutes ?? notice.remind_minutes ?? 30) || 0));
++  if (mins > 0) {
++    const trigger = mins >= 1440 && mins % 1440 === 0
++      ? '-P' + Math.round(mins / 1440) + 'D' : '-PT' + mins + 'M';
++    lines.push('BEGIN:VALARM', 'TRIGGER:' + trigger,
++      'ACTION:DISPLAY', 'DESCRIPTION:校园事务提醒 · 提前 ' + mins + ' 分钟', 'END:VALARM');
++  }
+   lines.push('END:VEVENT', 'END:VCALENDAR');
+   return lines.join('\r\n');
+ }
+diff --git a/lib/store.js b/lib/store.js
+index 3a1300b..95c9bf8 100644
+--- a/lib/store.js
++++ b/lib/store.js
+@@ -31,8 +31,12 @@ const DEFAULTS = {
+   feedback: [],  // 使用反馈
+   users: [],     // 账号（由使用者自行创建，程序不预置任何账号）
+   sessions: [],  // 登录会话（只存 token 哈希）
++  audit: [],     // 业务审计（SRS 4.3 / CM-FR-210）：只记动作与对象 id，不含原文
+ };
+ 
++/** 系统痕迹类数据集，统计「业务数据是否为空」时应排除 */
++const SYSTEM_NAMES = ['users', 'sessions', 'audit'];
++
+ function fileFor(name) {
+   if (!Object.prototype.hasOwnProperty.call(DEFAULTS, name)) {
+     throw new Error('未知数据集: ' + name);
+@@ -104,4 +108,5 @@ function uid(prefix) {
+   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+ }
+ 
+-module.exports = { get, set, update, flush, uid, DATA_DIR, NAMES: Object.keys(DEFAULTS) };
++module.exports = { get, set, update, flush, uid, DATA_DIR,
++  NAMES: Object.keys(DEFAULTS), SYSTEM_NAMES };
+diff --git a/lib/telemetry.js b/lib/telemetry.js
+index 6ce41b9..9732377 100644
+--- a/lib/telemetry.js
++++ b/lib/telemetry.js
+@@ -13,8 +13,13 @@ const fs = require('fs');
+ const path = require('path');
+ const crypto = require('crypto');
+ 
+-const LOG_DIR = path.join(__dirname, '..', 'process_logs');
+-const APP_VERSION = process.env.APP_VERSION || 'v6.0.0';
++// 冒烟测试等自动化进程必须指向隔离目录，否则测试造的调用与故意触发的报错
++// 会混进真实运行日志，导致错误率虚高、验收数据失去可信度。
++const LOG_DIR = process.env.CAMPUSDESK_LOG_DIR
++  ? path.resolve(process.env.CAMPUSDESK_LOG_DIR)
++  : path.join(__dirname, '..', 'process_logs');
++const LOG_SOURCE = process.env.CAMPUSDESK_LOG_SOURCE === 'smoke' ? 'smoke' : 'live';
++const APP_VERSION = process.env.APP_VERSION || 'v6.1.0';
+ 
+ /** 实时订阅：管理员后台的 SSE 流会在每次写日志后收到推送 */
+ const listeners = new Set();
+@@ -89,6 +94,7 @@ function log(entry) {
+     ts: now.toISOString(),
+     day,
+     app_version: APP_VERSION,
++    source: LOG_SOURCE,
+     session: entry.session ? String(entry.session).slice(0, 16) : 'anonymous',
+     role: entry.role || null,
+     module: String(entry.module || 'unknown').slice(0, 32),
+@@ -135,8 +141,10 @@ function aggregate(days) {
+   const wanted = Array.isArray(days) && days.length ? days : listDays().slice(-7);
+   const rows = wanted.flatMap(readDay);
+   const durations = rows.map((r) => r.duration_ms).sort((a, b) => a - b);
+-  const byModule = {}, byAction = {}, byStatus = {}, byDay = {}, byErrorCode = {}, byRole = {}, errors = [];
++  const byModule = {}, byAction = {}, byStatus = {}, byDay = {}, byErrorCode = {}, byRole = {}, bySource = {}, errors = [];
+   for (const r of rows) {
++    const src = r.source || 'legacy';
++    bySource[src] = (bySource[src] || 0) + 1;
+     byModule[r.module] = (byModule[r.module] || 0) + 1;
+     byAction[r.action] = (byAction[r.action] || 0) + 1;
+     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+@@ -158,6 +166,7 @@ function aggregate(days) {
+     by_status: byStatus,
+     by_error_code: byErrorCode,
+     by_role: byRole,
++    by_source: bySource,
+     by_day: byDay,
+     avg_duration_ms: durations.length
+       ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length * 100) / 100 : 0,
+@@ -168,6 +177,59 @@ function aggregate(days) {
+   };
+ }
+ 
++/**
++ * 「连续 7 天」达标自检：只按真实存在的日期文件推算，不补造任何历史日志。
++ * 断档会让当前连续归零，这正是作业要验证的东西，不能用「累计天数」糊弄过去。
++ */
++function utcDay(d) { return d.toISOString().slice(0, 10); }
++function dayDiff(a, b) {
++  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
++}
++function streakInfo() {
++  const days = listDays();
++  const set = new Set(days);
++  let longest = 0, longestEnd = '', longestStart = '';
++  let runStart = days[0] || '';
++  for (let i = 0; i < days.length; i++) {
++    if (i > 0 && dayDiff(days[i - 1], days[i]) !== 1) runStart = days[i];
++    const run = dayDiff(runStart, days[i]) + 1;
++    if (run > longest) { longest = run; longestStart = runStart; longestEnd = days[i]; }
++  }
++  // 当前连续：以今天或昨天为锚点往回数（今天还没用，昨天用了就不算断）
++  const today = localDay();
++  const yesterday = utcDay(new Date(Date.parse(today + 'T00:00:00Z') - 86400000));
++  const anchor = set.has(today) ? today : (set.has(yesterday) ? yesterday : null);
++  let current = 0, currentStart = '';
++  if (anchor) {
++    const cursor = new Date(anchor + 'T00:00:00Z');
++    while (set.has(utcDay(cursor))) {
++      current++;
++      currentStart = utcDay(cursor);
++      cursor.setUTCDate(cursor.getUTCDate() - 1);
++    }
++  }
++  const gaps = [];
++  for (let i = 1; i < days.length; i++) {
++    const missing = dayDiff(days[i - 1], days[i]) - 1;
++    if (missing > 0) gaps.push({ from: days[i - 1], to: days[i], missing });
++  }
++  const remaining_days = Math.max(0, 7 - current);
++  let target_date = null;
++  if (remaining_days > 0) {
++    const base = anchor || today;
++    target_date = utcDay(new Date(Date.parse(base + 'T00:00:00Z') + remaining_days * 86400000));
++  }
++  return {
++    days, days_count: days.length,
++    longest_streak: longest, longest_start: longestStart, longest_end: longestEnd,
++    current_streak: current, current_start: currentStart,
++    gaps, target_met: current >= 7,
++    remaining_days, target_date, checked_on: today,
++    log_source: LOG_SOURCE,
++  };
++}
++
+ function subscriberCount() { return listeners.size; }
+ 
+-module.exports = { log, listDays, readDay, aggregate, localDay, LOG_DIR, APP_VERSION, subscribe, subscriberCount };
++module.exports = { log, listDays, readDay, aggregate, streakInfo, localDay,
++  LOG_DIR, APP_VERSION, LOG_SOURCE, subscribe, subscriberCount };
+diff --git a/process_logs/2026-11-17.jsonl b/process_logs/2026-11-17.jsonl
+index 302f407..1685793 100644
+--- a/process_logs/2026-11-17.jsonl
++++ b/process_logs/2026-11-17.jsonl
+@@ -178,3 +178,100 @@
+ {"ts":"2026-11-17T06:47:01.941Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"admin","action":"overview","status":"error","duration_ms":0.38,"error_code":"UNAUTHORIZED","meta":{}}
+ {"ts":"2026-11-17T06:47:01.951Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":1.04,"error_code":null,"meta":{"log_days":5,"reconcile_calls":0}}
+ {"ts":"2026-11-17T06:47:01.958Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":1.16,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T06:49:00.405Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"home","status":"ok","duration_ms":0.9,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T06:49:00.409Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"user","status":"ok","duration_ms":0.82,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T06:49:00.416Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"admin","status":"ok","duration_ms":0.65,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T06:49:00.957Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"admin","status":"ok","duration_ms":0.92,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T06:49:01.021Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":1.13,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:15:25.179Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-17T07:17:53.056Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"home","status":"ok","duration_ms":3.35,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:17:53.155Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"state","status":"ok","duration_ms":2.93,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:55.324Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"home","status":"ok","duration_ms":1.11,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:17:55.342Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"state","status":"ok","duration_ms":1.18,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:57.736Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"admin","status":"ok","duration_ms":1.02,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:17:57.739Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"index","status":"ok","duration_ms":1.08,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:17:57.824Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":0.89,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:57.846Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":13.15,"error_code":null,"meta":{"total_calls":669,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:57.974Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":124.16,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:57.978Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.88,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:57.982Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":2.16,"error_code":null,"meta":{"row_count":196,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:17:57.991Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-17T07:18:03.378Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"home","status":"ok","duration_ms":1.15,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:18:03.393Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"state","status":"ok","duration_ms":0.85,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:28.411Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"home","status":"ok","duration_ms":7.64,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:18:28.528Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"state","status":"ok","duration_ms":2.59,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:32.951Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"admin","status":"ok","duration_ms":0.91,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:18:32.955Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"index","status":"ok","duration_ms":1.3,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:18:33.037Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":1.12,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:33.054Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":7.61,"error_code":null,"meta":{"total_calls":681,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:33.178Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":119.85,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:33.182Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":0.86,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:33.186Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":2.16,"error_code":null,"meta":{"row_count":208,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:33.195Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-17T07:18:47.251Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"index","status":"ok","duration_ms":2.68,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:18:47.359Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":0.91,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:47.378Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":7.38,"error_code":null,"meta":{"total_calls":688,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:47.493Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":111.35,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:47.498Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":1.09,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:47.512Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":8.73,"error_code":null,"meta":{"row_count":215,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:18:47.523Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-17T07:18:53.355Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"home","status":"ok","duration_ms":1.27,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:18:53.370Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"state","status":"ok","duration_ms":0.92,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:22:22.397Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"page","action":"user","status":"ok","duration_ms":1.04,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:22:22.429Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":0.79,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:20.853Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"admin","status":"ok","duration_ms":0.91,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:25:20.857Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"index","status":"ok","duration_ms":1.14,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:25:20.890Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"me","status":"ok","duration_ms":0.9,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:20.912Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"summary","status":"ok","duration_ms":6.28,"error_code":null,"meta":{"total_calls":700,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:21.002Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":85.42,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:21.006Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":1.05,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:21.021Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"day","status":"ok","duration_ms":8.66,"error_code":null,"meta":{"row_count":227,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:21.034Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"stream","status":"ok","duration_ms":0,"error_code":null,"meta":{"sse":1}}
++{"ts":"2026-11-17T07:25:23.429Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":1.07,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:25.457Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":80.38,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:26.582Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":81.25,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:29.956Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":82.1,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:37.039Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"overview","status":"ok","duration_ms":80.89,"error_code":null,"meta":{"datasets":7,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:25:45.981Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"page","action":"user","status":"ok","duration_ms":1.28,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:25:46.008Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"state","status":"ok","duration_ms":1.14,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:26:08.844Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"login","status":"error","duration_ms":47.31,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-17T07:26:21.994Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"login","status":"error","duration_ms":44.18,"error_code":"BAD_CREDENTIALS","meta":{}}
++{"ts":"2026-11-17T07:26:27.114Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"users","status":"ok","duration_ms":1.07,"error_code":null,"meta":{"user_count":2,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:26:40.354Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"admin","action":"password","status":"ok","duration_ms":118.5,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-17T07:26:50.343Z","day":"2026-11-17","app_version":"v6.0.0","session":"d1dffe892784","role":"admin","module":"auth","action":"login","status":"ok","duration_ms":59.61,"error_code":null,"meta":{"role":"student","reconcile_calls":0}}
++{"ts":"2026-11-17T07:26:50.358Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"page","action":"index","status":"ok","duration_ms":1.23,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T07:26:50.500Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"auth","action":"me","status":"ok","duration_ms":0.81,"error_code":null,"meta":{"reconcile_calls":0}}
++{"ts":"2026-11-17T07:26:50.557Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"bootstrap","action":"get","status":"ok","duration_ms":8.28,"error_code":null,"meta":{"datasets":7,"role":"student","reconcile_calls":1}}
++{"ts":"2026-11-17T07:26:50.562Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"activity","action":"get","status":"ok","duration_ms":4.72,"error_code":null,"meta":{"row_count":25,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:27:04.520Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"notice","action":"list","status":"ok","duration_ms":0.88,"error_code":null,"meta":{"item_count":0,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:27:04.532Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":6.59,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:08.408Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"equipment","action":"list","status":"ok","duration_ms":1.02,"error_code":null,"meta":{"item_count":0,"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:08.434Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":6.25,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:13.054Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"mistake","action":"list","status":"ok","duration_ms":0.89,"error_code":null,"meta":{"item_count":0,"due_today":0,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:27:13.064Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":5.7,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:13.852Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":5.71,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:27.064Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"activity","action":"get","status":"ok","duration_ms":4.9,"error_code":null,"meta":{"row_count":33,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:27:27.089Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":5.94,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:27.926Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":6.19,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:29.018Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":5.94,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:27:30.242Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":5.86,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:32:20.615Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":6.05,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:32:20.617Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"notice","action":"list","status":"ok","duration_ms":0.72,"error_code":null,"meta":{"item_count":0,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:32:20.618Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"mistake","action":"list","status":"ok","duration_ms":0.63,"error_code":null,"meta":{"item_count":0,"due_today":0,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:32:20.623Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"activity","action":"get","status":"ok","duration_ms":4.5,"error_code":null,"meta":{"row_count":41,"reconcile_calls":0}}
++{"ts":"2026-11-17T07:32:20.631Z","day":"2026-11-17","app_version":"v6.0.0","session":"87a34e8da651","role":"student","module":"dashboard","action":"get","status":"ok","duration_ms":5.29,"error_code":null,"meta":{"reconcile_calls":1}}
++{"ts":"2026-11-17T07:34:48.095Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":9.78,"error_code":null,"meta":{"log_days":5,"reconcile_calls":0}}
++{"ts":"2026-11-17T08:50:42.917Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":4.07,"error_code":null,"meta":{"log_days":5,"reconcile_calls":0}}
++{"ts":"2026-11-17T08:50:43.037Z","day":"2026-11-17","app_version":"v6.0.0","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":5.17,"error_code":null,"meta":{"log_days":5,"reconcile_calls":0}}
++{"ts":"2026-11-17T08:52:04.163Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"87a34e8da651","role":"student","module":"admin","action":"stream","status":"ok","duration_ms":8.14,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:18.171Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"health","action":"get","status":"ok","duration_ms":3.9,"error_code":null,"meta":{"log_days":5,"reconcile_calls":0}}
++{"ts":"2026-11-17T08:52:18.273Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"home","status":"ok","duration_ms":2.17,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:18.374Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"user","status":"ok","duration_ms":1.18,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:18.475Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"admin","status":"ok","duration_ms":1.09,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:18.576Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"index","status":"ok","duration_ms":0.7,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:18.694Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"index","status":"ok","duration_ms":0.44,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:19.093Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"home","status":"ok","duration_ms":1,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:19.224Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"57efdd91ba75","role":null,"module":"feedback","action":"post","status":"error","duration_ms":0.71,"error_code":"CSRF_ORIGIN_MISMATCH","meta":{}}
++{"ts":"2026-11-17T08:52:55.065Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"87a34e8da651","role":"student","module":"admin","action":"poll","status":"error","duration_ms":2.47,"error_code":"FORBIDDEN","meta":{}}
++{"ts":"2026-11-17T08:52:55.079Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"87a34e8da651","role":"student","module":"page","action":"login","status":"ok","duration_ms":1.49,"error_code":null,"meta":{}}
++{"ts":"2026-11-17T08:52:55.101Z","day":"2026-11-17","app_version":"v6.1.0","source":"live","session":"87a34e8da651","role":"student","module":"auth","action":"state","status":"ok","duration_ms":1.19,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
+diff --git a/process_logs/summary-2026-11-17.md b/process_logs/summary-2026-11-17.md
+index 01a2493..3e76326 100644
+--- a/process_logs/summary-2026-11-17.md
++++ b/process_logs/summary-2026-11-17.md
+@@ -7,29 +7,54 @@
+ 
+ | 指标 | 今日 | 昨日 | 变化 |
+ | --- | ---: | ---: | ---: |
+-| 调用总次数 | 162 | 166 | -4 |
+-| 平均耗时 (ms) | 15.94 | 11.1 | +4.84 |
+-| P95 耗时 (ms) | 80.3 | 78.95 | — |
+-| 最慢一次 (ms) | 162.23 | 160.59 | — |
+-| 报错次数 | 31 | 19 | — |
+-| 首次 / 末次调用 | 2026-11-17T06:05:12.201Z | — | 2026-11-17T06:41:44.111Z |
++| 调用总次数 | 277 | 166 | +111 |
++| 平均耗时 (ms) | 15.7 | 11.1 | +4.6 |
++| P95 耗时 (ms) | 82.1 | 78.95 | — |
++| 最慢一次 (ms) | 162.8 | 160.59 | — |
++| 报错次数 | 41 | 19 | — |
++| 首次 / 末次调用 | 2026-11-17T06:05:12.201Z | — | 2026-11-17T08:52:55.101Z |
++| 截至行数 / 日志来源 | 277 行 | — | legacy:265 / live:12 |
++
++> 本文件是 **2026-11-17T08:53:06.426Z** 生成时的静态快照：此后新产生的访问不会回写本日报，次日或收工前重新运行 `node scripts/daily-report.js` 会覆盖为最新口径。原始记录以 `process_logs/2026-11-17.jsonl` 为准。
++
++## 连续运行达标自检 · 验收指标 8.2
++
++| 项目 | 当前值 | 说明 |
++| --- | ---: | --- |
++| 已有日期文件 | 5 天 | 2026-11-11、2026-11-12、2026-11-13、2026-11-16、2026-11-17 |
++| **当前连续天数** | **2 天** | 验收要求连续 ≥ 7 天，按「连续」而非「累计」判定 |
++| 历史最长连续 | 3 天 | 2026-11-11 → 2026-11-13 |
++| 达标状态 | 未达标 | 从 2026-11-16 起还需连续使用到 **2026-11-22**（再 5 天） |
++
++断档明细：2026-11-13 → 2026-11-16 缺 2 天
++
++> 断档不能用「累计天数」代替，也不能补造历史日志。每天实际使用一次并运行 `node scripts/daily-report.js --sync` 即可自然累积。
++
++## 日志来源与口径
++
++| 来源 | 今日次数 |
++| --- | ---: |
++| legacy | 265 |
++| live | 12 |
++
++> `live` = 真实页面/接口访问；`legacy` = v6.1 之前写入、未带来源标记的历史记录；`smoke` = 冒烟测试。自 v6.1 起测试进程通过 `CAMPUSDESK_LOG_DIR` 写入隔离目录，**不再进入本日报**。历史 `legacy` 记录中含测试故意触发的 `FORBIDDEN` / `BAD_CREDENTIALS` / `OUT_OF_STOCK` 等错误码，因此累计错误率会偏高，评估程序稳定性时请以新日志为准。
+ 
+ ## 调用频次 · 按模块
+ 
+ | 模块 | 次数 |
+ | --- | ---: |
+-| admin | 33 |
+-| page | 28 |
+-| auth | 23 |
+-| notice | 22 |
+-| equipment | 10 |
+-| health | 8 |
++| admin | 66 |
++| page | 59 |
++| auth | 46 |
++| notice | 24 |
++| dashboard | 16 |
++| health | 14 |
++| equipment | 11 |
++| mistake | 10 |
++| activity | 9 |
+ | loan | 8 |
+-| mistake | 8 |
+-| dashboard | 5 |
+-| activity | 5 |
+-| bootstrap | 4 |
+-| feedback | 4 |
++| bootstrap | 5 |
++| feedback | 5 |
+ | logs | 2 |
+ | not-exist | 2 |
+ 
+@@ -37,42 +62,44 @@
+ 
+ | 动作 | 次数 |
+ | --- | ---: |
+-| get | 26 |
+-| index | 14 |
+-| login | 12 |
+-| list | 12 |
++| get | 48 |
++| index | 23 |
++| login | 20 |
++| overview | 17 |
++| list | 17 |
++| state | 13 |
++| admin | 13 |
++| users | 12 |
++| home | 11 |
+ | add | 10 |
+ | parse | 10 |
+-| overview | 8 |
+-| export | 8 |
++| export | 9 |
++| user | 9 |
++| summary | 8 |
++| stream | 8 |
+ | setup | 7 |
+-| users | 6 |
+-| admin | 6 |
++| me | 7 |
++| day | 6 |
+ | create | 4 |
+ | return | 4 |
+ | review | 4 |
+-| summary | 4 |
+-| user | 4 |
+-| state | 3 |
+-| me | 2 |
++| poll | 3 |
+ | save | 2 |
+ | toggle | 2 |
+ | ics | 2 |
+ | delete | 2 |
+-| home | 2 |
+-| stream | 2 |
+-| poll | 2 |
+-| day | 2 |
+-| report | 1 |
+-| logout | 1 |
++| report | 2 |
++| logout | 2 |
++| password | 1 |
++| post | 1 |
+ 
+ ## 调用频次 · 按角色
+ 
+ | 角色 | 次数 |
+ | --- | ---: |
+-| student | 62 |
+-| anonymous | 48 |
+-| admin | 46 |
++| admin | 101 |
++| student | 89 |
++| anonymous | 81 |
+ | teacher | 6 |
+ 
+ ## 报错记录
+@@ -110,19 +137,30 @@
+ | 2026-11-17T06:41:43.696Z | not-exist | get | UNKNOWN_ROUTE |
+ | 2026-11-17T06:41:43.730Z | activity | get | UNAUTHORIZED |
+ | 2026-11-17T06:41:43.858Z | admin | export | FORBIDDEN |
++| 2026-11-17T06:41:44.292Z | dashboard | get | UNAUTHORIZED |
++| 2026-11-17T06:41:44.373Z | auth | login | PORTAL_MISMATCH |
++| 2026-11-17T06:41:44.448Z | auth | login | PORTAL_MISMATCH |
++| 2026-11-17T06:47:01.927Z | activity | get | UNAUTHORIZED |
++| 2026-11-17T06:47:01.933Z | admin | export | UNAUTHORIZED |
++| 2026-11-17T06:47:01.941Z | admin | overview | UNAUTHORIZED |
++| 2026-11-17T07:26:08.844Z | auth | login | BAD_CREDENTIALS |
++| 2026-11-17T07:26:21.994Z | auth | login | BAD_CREDENTIALS |
++| 2026-11-17T08:52:19.224Z | feedback | post | CSRF_ORIGIN_MISMATCH |
++| 2026-11-17T08:52:55.065Z | admin | poll | FORBIDDEN |
+ 
+ ### 错误码分布
+ 
+ | 错误码 | 次数 |
+ | --- | ---: |
+-| FORBIDDEN | 12 |
+-| UNAUTHORIZED | 5 |
+-| PORTAL_MISMATCH | 4 |
++| FORBIDDEN | 13 |
++| UNAUTHORIZED | 9 |
++| PORTAL_MISMATCH | 6 |
++| BAD_CREDENTIALS | 4 |
+ | ALREADY_INITIALIZED | 2 |
+-| BAD_CREDENTIALS | 2 |
+ | EMPTY_NOTICE | 2 |
+ | OUT_OF_STOCK | 2 |
+ | UNKNOWN_ROUTE | 2 |
++| CSRF_ORIGIN_MISMATCH | 1 |
+ 
+ ## 数据文件状态
+ 
+@@ -133,7 +171,9 @@
+ | loans.json | 0 |
+ | mistakes.json | 0 |
+ | feedback.json | 0 |
++| audit.json | 0 |
+ 
+ ---
+ 
+-生成时间：2026-11-17T06:41:44.266Z
++生成时间：2026-11-17T08:53:06.426Z
++数据口径：原始 jsonl 为准；业务数据 data/ 已被 .gitignore 排除，本日报只统计条数。
+diff --git a/public/admin/admin.js b/public/admin/admin.js
+index 04e1970..f327a09 100644
+--- a/public/admin/admin.js
++++ b/public/admin/admin.js
+@@ -12,14 +12,16 @@ const S = {
+   cursor: 0, paused: false, live: false, pollTimer: null, es: null,
+   stats: { total: 0, errors: 0 },
+   dayRows: [], selectedDay: '',
++  feedback: [], audit: [], backup: null,
+ };
+ const TITLES = {
+   live: ['实时运行日志', '服务端每次调用自动写入的脱敏记录，通过 SSE 实时推送', '运行监控'],
+   health: ['系统健康', 'CM-FR-509 健康检查清单与实时资源占用', '运行监控'],
+   analytics: ['日志分析', '按模块、动作、错误码、角色、自然日聚合，驱动真实迭代', '运行监控'],
+   users: ['账号与角色', '所有账号由使用者创建，系统不预置任何账号', '系统管理'],
+-  data: ['数据总览', '只看条数与服务信息，不展示业务内容', '系统管理'],
+-  backup: ['备份与导出', 'CM-FR-507 日志导出与本机数据备份命令', '系统管理'],
++  data: ['数据总览', '条数、服务信息与脱敏业务审计记录', '系统管理'],
++  feedback: ['反馈收集', '8 位真实使用者的反馈与收集进度', '系统管理'],
++  backup: ['备份与导出', '日志导出、业务快照 SHA256 校验与按需恢复', '系统管理'],
+   about: ['版本与规划', '真实 Git 迭代记录与 SRS 管理员职责对照', '版本'],
+ };
+ 
+@@ -302,6 +304,8 @@ function renderPermMatrix() {
+     ['访问实时日志与管理接口', false, false, true, '服务端二次校验'],
+     ['创建账号 / 停用 / 重置密码', false, false, true, '仅管理端入口'],
+     ['导出脱敏运行日志', false, false, true, 'CM-FR-507'],
++    ['查看反馈明细与业务审计', false, false, true, '验收 8.4 / CM-FR-210'],
++    ['导出、校验并恢复数据备份', false, false, true, '需显式确认，账号会话不动'],
+   ];
+   const mark = (v) => v ? '<span class="tag tag-ok">允许</span>' : '<span class="tag tag-gray">—</span>';
+   $('#perm-matrix').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr><th>能力</th><th>学生</th><th>教师</th><th>管理员</th><th>说明</th></tr></thead><tbody>' +
+@@ -309,6 +313,62 @@ function renderPermMatrix() {
+     '</tbody></table></div><div class="admin-note">矩阵与 <code>lib/api.js</code> 的 PERMISSIONS 配置一致；管理员为通配权限，但同样受入口 portal 约束。</div>';
+ }
+ 
++/* ------------------------------ 反馈收集 / 业务审计 ------------------------------ */
++async function refreshFeedback() {
++  const r = await api('admin/feedback');
++  S.feedback = r.items || [];
++  renderFeedback();
++}
++function renderFeedback() {
++  const items = S.feedback || [], n = items.length;
++  $('#fb-kpi').textContent = n;
++  $('#badge-feedback').textContent = n;
++  $('#fb-score-avg').textContent = n
++    ? (items.reduce((s, f) => s + (Number(f.score) || 0), 0) / n).toFixed(1) : '—';
++  $('#fb-reuse-count').textContent = items.filter((f) => f.reuse === '愿意').length;
++  $('#fb-problem-count').textContent = items.filter((f) => String(f.problem || '').trim()).length;
++  $('#fb-progress-chip').textContent = n + ' / 8';
++  $('#fb-progress-fill').style.width = Math.min(100, n / 8 * 100) + '%';
++  $('#fb-slots').innerHTML = Array.from({ length: 8 }, (_, i) =>
++    '<span class="fb-slot' + (i < n ? ' on' : '') + '">' +
++    (i < n ? '✓' : String(i + 1).padStart(2, '0')) + '</span>').join('');
++  if (!n) {
++    $('#fb-table').innerHTML = '<div class="empty-v2"><div class="empty-icon"><svg><use href="#i-heart"/></svg></div>' +
++      '<b>还没有收到反馈</b><span>让同学从用户端「使用反馈」实际试用后自行填写；系统不会代填</span></div>';
++    return;
++  }
++  $('#fb-table').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr>' +
++    '<th>#</th><th>身份</th><th>模块</th><th>实际完成的任务</th><th>评分</th><th>遇到的问题</th>' +
++    '<th>建议</th><th>再用意愿</th><th>时间</th></tr></thead><tbody>' +
++    items.map((f, i) => '<tr><td class="num">' + String(i + 1).padStart(2, '0') + '</td>' +
++      '<td>' + esc(f.role) + '</td><td>' + esc(f.module) + '</td>' +
++      '<td>' + esc(f.task_done || '—') + '</td><td class="num">' + (f.score || '—') + '</td>' +
++      '<td>' + esc(f.problem || '—') + '</td><td>' + esc(f.suggestion || '—') + '</td>' +
++      '<td>' + esc(f.reuse || '—') + '</td>' +
++      '<td class="nowrap">' + esc(String(f.created_at).slice(0, 16).replace('T', ' ')) + '</td></tr>').join('') +
++    '</tbody></table></div>';
++}
++async function refreshAudit() {
++  const r = await api('admin/audit');
++  S.audit = r.items || [];
++  renderAudit();
++}
++function renderAudit() {
++  const rows = S.audit || [];
++  $('#audit-count').textContent = rows.length + ' 条';
++  if (!rows.length) {
++    $('#audit-table').innerHTML = '<div class="table-empty"><b>暂无审计记录</b><br>任意一次业务写操作（保存通知、借还、归档、反馈等）都会自动留痕</div>';
++    return;
++  }
++  $('#audit-table').innerHTML = '<div class="table-wrap"><table class="table"><thead><tr>' +
++    '<th>时间</th><th>角色</th><th>动作</th><th>对象类型</th><th>对象 ID</th></tr></thead><tbody>' +
++    rows.map((r) => '<tr><td class="nowrap">' + esc(String(r.at).slice(0, 19).replace('T', ' ')) + '</td>' +
++      '<td><span class="tag tag-gray">' + esc(ROLE_LABEL[r.actor_role] || r.actor_role || '—') + '</span></td>' +
++      '<td><code>' + esc(r.action) + '</code></td><td>' + esc(r.target_type) + '</td>' +
++      '<td class="muted">' + esc(r.target_id || '—') + '</td></tr>').join('') +
++    '</tbody></table></div>';
++}
++
+ /* ------------------------------ 数据与备份 ------------------------------ */
+ const DATA_LABEL = {
+   notices: '通知 / 待办', equipment: '器材清单', loans: '借还流水',
+@@ -372,6 +432,7 @@ async function refreshUsers() { const r = await api('admin/users'); S.users = r.
+ async function refreshOverview() {
+   S.overview = await api('admin/overview');
+   renderOverview(); renderHealth(); renderPermMatrix();
++  try { await refreshAudit(); } catch (_) {}
+ }
+ async function refreshDay(date) {
+   S.selectedDay = date;
+@@ -388,8 +449,14 @@ function switchView(name) {
+   window.scrollTo({ top: 0, behavior: 'smooth' });
+   if (name === 'analytics') guard(refreshSummary)();
+   if (name === 'users') guard(refreshUsers)();
++  if (name === 'feedback') guard(refreshFeedback)();
+   if (name === 'data' || name === 'backup' || name === 'health' || name === 'about') guard(refreshOverview)();
+ }
++function setVerifyBox(title, detail, ok) {
++  const el = $('#backup-verify');
++  el.className = 'verify-box' + (ok === null ? '' : (ok ? ' ok' : ' bad'));
++  el.innerHTML = '<b>' + esc(title) + '</b>' + detail;
++}
+ function exportLogs(format) {
+   const day = $('#export-day').value || S.selectedDay || S.allDays[S.allDays.length - 1] || '';
+   if (!day) { toast('暂无可导出的日志日期', true); return; }
+@@ -437,6 +504,60 @@ function bindEvents() {
+   $('#btn-export-json').addEventListener('click', () => exportLogs('json'));
+   $('#btn-export-csv').addEventListener('click', () => exportLogs('csv'));
+ 
++  /* 业务数据备份：导出 → 校验 → 显式确认后恢复 */
++  $('#btn-backup-export').addEventListener('click', () => {
++    window.location.href = '/api/admin/backup';
++    toast('正在导出业务数据快照（含 SHA256 校验值）');
++  });
++  $('#backup-file').addEventListener('change', guard(async (e) => {
++    const f = e.target.files && e.target.files[0];
++    e.target.value = '';
++    if (!f) return;
++    if (f.size > 20 * 1024 * 1024) {
++      setVerifyBox('文件过大', '超过 20 MB，已拒绝解析。', false);
++      S.backup = null; $('#btn-backup-restore').classList.add('hidden'); return;
++    }
++    let obj;
++    try { obj = JSON.parse(await f.text()); }
++    catch (err) {
++      setVerifyBox('无法解析备份文件', esc(err.message), false);
++      S.backup = null; $('#btn-backup-restore').classList.add('hidden'); return;
++    }
++    S.backup = obj;
++    try {
++      const r = await api('admin/backup/verify', { method: 'POST', body: { backup: obj } });
++      if (r.ok) {
++        const counts = Object.entries(r.datasets || {}).map(([k, v]) => k + ':' + v).join(' · ');
++        setVerifyBox('校验通过 · 可以恢复',
++          'SHA256 匹配，导出于 ' + esc(r.exported_at || '—') + '。<br><code>' +
++          esc(r.computed_checksum) + '</code><br>数据集条数：' + esc(counts), true);
++        $('#btn-backup-restore').classList.remove('hidden');
++      } else {
++        setVerifyBox('校验未通过 · 已禁止恢复', esc((r.problems || []).join('；')), false);
++        $('#btn-backup-restore').classList.add('hidden');
++      }
++    } catch (err) {
++      setVerifyBox('校验请求失败', esc(err.message), false);
++      $('#btn-backup-restore').classList.add('hidden');
++    }
++    $('#backup-confirm').checked = false;
++  }));
++  $('#btn-backup-restore').addEventListener('click', guard(async () => {
++    if (!$('#backup-confirm').checked) { toast('请先勾选恢复确认', true); return; }
++    if (!S.backup) { toast('请先选择并校验一份备份文件', true); return; }
++    const r = await api('admin/backup/restore', {
++      method: 'POST', body: { backup: S.backup, confirm: 'RESTORE' },
++    });
++    toast('业务数据已恢复');
++    setVerifyBox('恢复完成', esc(r.note || ''), true);
++    $('#btn-backup-restore').classList.add('hidden');
++    $('#backup-confirm').checked = false;
++    await refreshOverview();
++  }));
++  $('#fb-refresh').addEventListener('click', guard(async () => {
++    await refreshFeedback(); toast('反馈已刷新');
++  }));
++
+   $('#form-user').addEventListener('submit', guard(async (e) => {
+     e.preventDefault();
+     await api('admin/users', { method: 'POST', body: {
+@@ -476,6 +597,7 @@ function bindEvents() {
+   await guard(refreshSummary)();
+   await guard(refreshOverview)();
+   await guard(refreshUsers)();
++  await guard(refreshFeedback)();
+   const day = S.allDays[S.allDays.length - 1] || (await api('health')).today;
+   await guard(() => refreshDay(day))();
+   connectStream();
+diff --git a/public/admin/index.html b/public/admin/index.html
+index 6b24a31..d85270f 100644
+--- a/public/admin/index.html
++++ b/public/admin/index.html
+@@ -43,6 +43,7 @@
+       <div class="nav-label">系统管理 · SRS 2.4 / 4.3</div>
+       <button class="nav-item" data-view="users"><svg><use href="#i-users"/></svg>账号与角色<span class="nav-badge" id="badge-users">0</span></button>
+       <button class="nav-item" data-view="data"><svg><use href="#i-db"/></svg>数据总览</button>
++      <button class="nav-item" data-view="feedback"><svg><use href="#i-heart"/></svg>反馈收集<span class="nav-badge" id="badge-feedback">0</span></button>
+       <button class="nav-item" data-view="backup"><svg><use href="#i-archive"/></svg>备份与导出</button>
+ 
+       <div class="nav-divider"></div>
+@@ -140,7 +141,7 @@
+             <div id="health-meta"></div>
+           </div>
+         </div>
+-        <div class="band band-info" style="margin-top:16px"><svg><use href="#i-info"/></svg><div><b>关于「连续运行 ≥ 7 天」</b><span>检查项按 process_logs/ 中真实存在的日期文件计数，不预置、不补造历史日志。每天实际使用并运行 <code>node scripts/daily-report.js --sync</code> 即可自然累积。</span></div></div>
++        <div class="band band-info" style="margin-top:16px"><svg><use href="#i-info"/></svg><div><b>关于「连续运行 ≥ 7 天」</b><span>检查项按「当前连续天数」而非「累计天数」判定：断一天就重新计数，日报里会列出断档明细与达标日期。日志不预置、不补造；每天实际使用并运行 <code>node scripts/daily-report.js --sync</code> 即可自然累积。</span></div></div>
+       </section>
+ 
+       <!-- ============ 日志分析 ============ -->
+@@ -220,6 +221,10 @@
+             <div id="role-bars"></div>
+           </div>
+         </div>
++        <div class="card" style="margin-top:16px">
++          <div class="card-head"><div><h3>业务审计记录 · CM-FR-210</h3><div class="card-sub">只记谁、何时、做了什么、作用于哪个对象；不含原文、姓名与题目</div></div><span class="chip" id="audit-count">0 条</span></div>
++          <div id="audit-table"></div>
++        </div>
+         <div class="card" style="margin-top:16px">
+           <div class="card-head"><h3>每日同步</h3></div>
+           <pre class="codeblock">node scripts/daily-report.js --sync   # 生成当日日报并 git commit
+@@ -228,6 +233,26 @@ git push                              # 需要提交到 GitHub 时再执行</pre
+         </div>
+       </section>
+ 
++      <!-- ============ 反馈收集 · 验收 8.4 ============ -->
++      <section class="view" id="view-feedback">
++        <div class="section-intro"><div class="eyebrow">验收指标 8.4 · 8 位真实用户</div><h2>反馈收集</h2><p>反馈必须由真实使用者填写，系统不代填、不生成示例评价。这里只汇总本机已提交的内容。</p></div>
++        <div class="kpi-grid">
++          <div class="kpi"><div class="kpi-label">已收集反馈</div><div class="kpi-num" id="fb-kpi">0</div><div class="kpi-foot">目标 8 位真实使用者</div></div>
++          <div class="kpi"><div class="kpi-label">平均好用程度</div><div class="kpi-num" id="fb-score-avg">—</div><div class="kpi-foot">1–5 分，来自真实打分</div></div>
++          <div class="kpi"><div class="kpi-label">愿意再次使用</div><div class="kpi-num" id="fb-reuse-count">0</div><div class="kpi-foot">明确选择「愿意」的人数</div></div>
++          <div class="kpi"><div class="kpi-label">记录到的问题</div><div class="kpi-num" id="fb-problem-count">0</div><div class="kpi-foot">用于驱动后续迭代</div></div>
++        </div>
++        <div class="card">
++          <div class="card-head"><div><h3>收集进度</h3><div class="card-sub">8 个槽位，每填满一格代表一位同学提交</div></div><span class="chip accent" id="fb-progress-chip">0 / 8</span></div>
++          <div class="progress"><div id="fb-progress-fill"></div></div>
++          <div id="fb-slots" class="fb-slots"></div>
++        </div>
++        <div class="card" style="margin-top:16px">
++          <div class="card-head"><div><h3>反馈明细</h3><div class="card-sub">业务数据仅本机可见，不写入脱敏运行日志</div></div><button class="btn btn-soft btn-sm" id="fb-refresh"><svg><use href="#i-refresh"/></svg>刷新</button></div>
++          <div id="fb-table"></div>
++        </div>
++      </section>
++
+       <!-- ============ 备份与导出 ============ -->
+       <section class="view" id="view-backup">
+         <div class="section-intro"><div class="eyebrow">CM-FR-507 / 4.3 · 导出与备份</div><h2>备份与导出</h2><p>日志导出是真实下载；备份给出可执行的本机命令，不自动替你复制或改动业务数据。</p></div>
+@@ -245,16 +270,18 @@ git push                              # 需要提交到 GitHub 时再执行</pre
+             <div class="admin-note" id="export-note">导出内容为脱敏运行日志，不含通知原文、姓名、学号、题目或反馈正文。</div>
+           </div>
+           <div class="card">
+-            <div class="card-head"><div><h3>数据备份 · 4.3</h3><div class="card-sub">业务数据由使用者录入，备份动作由你在本机执行</div></div></div>
++            <div class="card-head"><div><h3>业务数据备份 · 4.3</h3><div class="card-sub">导出带 SHA256 的快照；校验与恢复都由你显式触发</div></div><span class="chip good">可用</span></div>
+             <div id="backup-datasets"></div>
+-            <div class="card-head mt"><h3>备份命令</h3></div>
+-            <pre class="codeblock"># Windows PowerShell（在项目根目录执行）
+-$stamp = Get-Date -Format yyyyMMdd-HHmm
+-Copy-Item -Path data -Destination ".workbuddy/backups/data-$stamp" -Recurse
+-
+-# 校验备份完整性：逐文件对比条数
+-node scripts/reset-password.js   # 可查看账号是否完整</pre>
+-            <div class="band band-warn"><svg><use href="#i-info"/></svg><div><b>为什么页面不提供「一键备份」按钮</b><span>写入备份目录会改变磁盘上的数据副本；按「一切数据由我添加」的约定，这类副作用由你显式执行，页面只提供命令与当前条数核对。</span></div></div>
++            <div class="head-actions" style="margin-top:14px">
++              <button class="btn btn-primary" id="btn-backup-export"><svg><use href="#i-download"/></svg>导出快照</button>
++              <label class="file-btn" for="backup-file">选择备份文件</label>
++              <input type="file" id="backup-file" class="sr-file" accept=".json,application/json">
++            </div>
++            <div class="card-head mt"><h3>完整性校验</h3></div>
++            <div id="backup-verify" class="verify-box">选择一份之前导出的备份 JSON，先校验 checksum 与各数据集条数；校验本身不写入任何数据。</div>
++            <label class="review-check" style="margin-top:12px"><input type="checkbox" id="backup-confirm"><span>我确认要用这份备份覆盖当前业务数据（账号与会话不会变动）</span></label>
++            <button class="btn btn-danger full hidden" id="btn-backup-restore">确认恢复业务数据</button>
++            <div class="band band-info" style="margin-top:14px"><svg><use href="#i-info"/></svg><div><b>边界</b><span>恢复只覆盖通知、器材、借还、错题、反馈五类业务数据；审计记录保留、账号与会话不动。只有勾选确认并点击恢复才会写入，其余操作都是只读。</span></div></div>
+           </div>
+         </div>
+         <div class="card" style="margin-top:16px">
+@@ -277,7 +304,7 @@ node scripts/reset-password.js   # 可查看账号是否完整</pre>
+             <tr><td>查看系统运行状态</td><td><span class="st st-ok">已实现</span></td><td>系统健康页：6 项检查 + 实时内存与运行时长</td></tr>
+             <tr><td>查看错误日志</td><td><span class="st st-ok">已实现</span></td><td>SSE 实时流 + 错误码聚合 + 最近报错列表</td></tr>
+             <tr><td>管理软件版本</td><td><span class="st st-ok">已实现</span></td><td>版本时间线 + 日志 app_version 字段</td></tr>
+-            <tr><td>管理数据备份</td><td><span class="st st-part">部分实现</span></td><td>条数核对 + 导出 + 可执行备份命令；自动备份与完整性校验待接入</td></tr>
++            <tr><td>管理数据备份</td><td><span class="st st-ok">已实现</span></td><td>带 SHA256 的快照导出、完整性校验、显式确认后恢复；自动定时备份仍规划中</td></tr>
+             <tr><td>管理 AI 模型</td><td><span class="st st-plan">规划中</span></td><td>当前为纯本地规则引擎，无模型服务，故不提供空壳开关</td></tr>
+           </tbody></table></div>
+         </div>
+diff --git a/public/style.css b/public/style.css
+index cd528c6..e631df7 100644
+--- a/public/style.css
++++ b/public/style.css
+@@ -675,3 +675,47 @@ h1, h2, h3, h4 { letter-spacing: .1px; }
+ @media (prefers-reduced-motion: reduce) {
+   .flow-step, .card, .btn, .trend-bar { transition: none !important; animation: none !important; }
+ }
++
++/* ---------- 15. v6.1 · 导入 / 版本比对 / 备份校验 ---------- */
++.sr-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
++.import-bar {
++  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
++  margin-bottom: var(--sp-3); padding: 10px 12px;
++  background: var(--bg-soft, #f6f8fb); border: 1px solid var(--line, #e4e9f0);
++  border-radius: var(--r-md, 8px);
++}
++.file-btn {
++  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
++  padding: 7px 12px; border-radius: var(--r-md, 8px);
++  border: 1px solid var(--line, #d8e0ea); background: #fff;
++  font-size: 13px; font-weight: 500; color: var(--text, #1b2733);
++}
++.file-btn:hover { border-color: var(--brand, #2563d9); color: var(--brand, #2563d9); }
++.file-btn svg { width: 14px; height: 14px; }
++.import-types { font-size: 12px; color: var(--muted, #6b7684); font-family: var(--mono, monospace); }
++.import-bar .hint { margin-left: auto; font-size: 12px; color: var(--muted, #6b7684); }
++.textarea.drag-over { outline: 2px dashed var(--brand, #2563d9); outline-offset: 2px; }
++.review-box .hint { margin: -4px 0 10px; font-size: 12px; color: var(--muted, #6b7684); }
++.review-box input[readonly] { background: var(--bg-soft, #f6f8fb); color: var(--muted, #6b7684); }
++.notice-meta .tag-warn { margin-left: 2px; }
++#revise-result .card-head { margin-bottom: 12px; }
++#revise-result .card-head h3 { font-size: 14px; }
++#revise-result .band { margin-top: 14px; }
++.verify-box { padding: 12px 14px; border-radius: var(--r-md, 8px); border: 1px solid var(--line, #e4e9f0); font-size: 13px; }
++.verify-box.ok { background: #eef8f2; border-color: #b8e2c9; }
++.verify-box.bad { background: #fdf0f0; border-color: #f0c0c0; }
++.verify-box b { display: block; margin-bottom: 4px; }
++.verify-box code { word-break: break-all; font-size: 12px; }
++.admin-shell .verify-box.ok { background: #17342c; border-color: #2a5b4a; }
++.admin-shell .verify-box.bad { background: #3a2020; border-color: #6a3333; }
++.fb-slots { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
++.fb-slot {
++  flex: 1 1 60px; min-width: 56px; text-align: center; padding: 8px 4px;
++  border-radius: var(--r-md, 8px); border: 1px dashed var(--line, #e4e9f0);
++  color: var(--muted, #6b7684); font-size: 12px; font-family: var(--mono, monospace);
++}
++.fb-slot.on { border-style: solid; background: #eaf5ee; border-color: #b8e2c9; color: #14663f; }
++.admin-shell .fb-slot.on { background: #17342c; border-color: #2a5b4a; color: #9fd9bb; }
++@media (max-width: 760px) {
++  .import-bar .hint { margin-left: 0; width: 100%; }
++}
+diff --git a/public/user/app.js b/public/user/app.js
+index 24ef3e9..77f23c7 100644
+--- a/public/user/app.js
++++ b/public/user/app.js
+@@ -12,6 +12,14 @@ const S = {
+   notices: [], equipment: null, mistakes: [], feedback: [], activity: [],
+   parsed: null, today: '', version: '', empty: true,
+   filter: { text: '', category: '', state: '' },
++  importType: 'paste', feedbackProgress: 0, revise: null,
++};
++
++const IMPORT_LABEL = { paste: '手动粘贴', txt: '.txt', md: '.md', csv: '.csv', json: '.json' };
++const FIELD_LABEL = {
++  title: '标题', category: '分类', event_date: '活动日期', event_time: '时间',
++  location: '地点', deadline: '截止日期', audience: '面向对象', todos: '待办事项',
++  materials: '所需材料', issuer: '发布单位', importance: '重要程度',
+ };
+ 
+ const ICON = {
+@@ -45,6 +53,8 @@ const ACTION_LABEL = {
+   password: '修改密码', login: '登录', logout: '退出', equipment: '查看器材',
+   notice: '查看通知', mistake: '查看错题', feedback: '查看反馈', loan: '查看借还',
+   health: '健康检查', index: '打开工作台', home: '打开封面',
++  revise: '版本比对', preview: '预览日历', progress: '查看反馈进度',
++  audit: '查看审计', backup: '备份导出',
+ };
+ 
+ async function api(path, opts = {}) {
+@@ -93,6 +103,68 @@ function addDays(iso, n) {
+   const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n);
+   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+ }
++function localISO() {
++  const d = new Date(), p = (n) => String(n).padStart(2, '0');
++  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
++}
++function deadlineText(iso) {
++  const d = Math.round((Date.parse(iso + 'T00:00:00') - Date.parse(localISO() + 'T00:00:00')) / 86400000);
++  if (d < 0) return '已逾期 ' + (-d) + ' 天';
++  if (d === 0) return '今天截止';
++  if (d === 1) return '明天截止';
++  return '还剩 ' + d + ' 天';
++}
++
++/** CM-FR-101：5 种文本导入，全部在本机浏览器完成，不上传、不依赖第三方库 */
++function parseImportedText(name, raw) {
++  const ext = (String(name).split('.').pop() || '').toLowerCase();
++  const type = ext === 'csv' ? 'csv' : ext === 'json' ? 'json'
++    : (ext === 'md' || ext === 'markdown') ? 'md' : 'txt';
++  let text = raw, note = '';
++  if (type === 'json') {
++    try {
++      const obj = JSON.parse(raw);
++      if (Array.isArray(obj)) {
++        text = obj.map((x) => typeof x === 'string' ? x
++          : (x.text || x.content || x.body || x.notice || JSON.stringify(x))).join('\n');
++        note = '数组 ' + obj.length + ' 项';
++      } else if (obj && typeof obj === 'object') {
++        const picked = obj.text || obj.content || obj.body || obj.notice || obj.raw;
++        text = String(picked || raw);
++        note = picked ? '已取文本字段' : '未找到文本字段，按原始 JSON 导入';
++      }
++    } catch (_) { note = 'JSON 解析失败，按纯文本导入'; }
++  } else if (type === 'csv') {
++    text = raw.split(/\r?\n/).map((line) => line
++      .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
++      .map((c) => c.replace(/^"|"$/g, '').trim()).filter(Boolean).join(' '))
++      .filter(Boolean).join('\n');
++    note = '按行合并单元格';
++  }
++  return { type, text: String(text).trim(), note };
++}
++function importFile(file) {
++  if (!file) return;
++  const ext = (String(file.name).split('.').pop() || '').toLowerCase();
++  if (!['txt', 'text', 'md', 'markdown', 'csv', 'json'].includes(ext)) {
++    toast('仅支持 .txt / .md / .csv / .json 文本格式', true); return;
++  }
++  if (file.size > 512 * 1024) { toast('文件超过 512 KB，请拆分后再导入', true); return; }
++  const reader = new FileReader();
++  reader.onload = () => {
++    const r = parseImportedText(file.name, String(reader.result || ''));
++    if (!r.text) { toast('文件内没有可提取的文本', true); return; }
++    $('#notice-input').value = r.text;
++    $('#notice-input').dispatchEvent(new Event('input'));
++    S.importType = r.type;
++    $('#import-info').textContent = file.name + ' · ' + (Math.round(file.size / 1024 * 10) / 10) +
++      ' KB · ' + IMPORT_LABEL[r.type] + (r.note ? ' · ' + r.note : '');
++    toast('已导入 ' + file.name + '，请核对原文后点击「结构化提取」');
++  };
++  reader.onerror = () => toast('文件读取失败', true);
++  reader.readAsText(file, 'utf-8');
++}
++
+ function downloadText(filename, text, type) {
+   const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' });
+   const url = URL.createObjectURL(blob);
+@@ -136,6 +208,7 @@ async function refreshView(name) {
+       const r = await api('mistake/list'); S.mistakes = r.items; renderMistakes();
+     } else if (name === 'feedback') {
+       if (can('feedback.list')) { const r = await api('feedback/list'); S.feedback = r.items; }
++      try { const p = await api('feedback/progress'); S.feedbackProgress = p.collected; } catch (_) {}
+       renderFeedback();
+     } else if (name === 'activity') {
+       const a = await api('activity?days=7'); S.activity = a.items || []; renderActivity();
+@@ -186,7 +259,8 @@ function renderDashboard() {
+     '<span class="sys-item">版本 <b>' + esc(sys.version) + '</b></span>' +
+     '<span class="sys-item">运行 <b>' + esc(durationText(sys.uptime_s)) + '</b></span>' +
+     '<span class="sys-item">内存 <b>' + sys.rss_mb + ' MB</b></span>' +
+-    '<span class="sys-item">日志 <b>' + sys.log_days + ' / 7 天</b></span>' +
++    '<span class="sys-item">日志 <b>' + sys.log_days + ' 天</b></span>' +
++    '<span class="sys-item">连续 <b>' + (sys.streak_days ?? 0) + ' / 7 天</b></span>' +
+     '<span class="sys-item">数据 <b>' + (S.empty ? '全部为空 · 由你录入' : '由使用者录入') + '</b></span>';
+ 
+   const days = lastDays(7), byDay = d.telemetry.by_day || {};
+@@ -257,13 +331,20 @@ function renderParseResult(n) {
+     ['置信度', n.confidence + '%（命中 ' + n.hit_rules + '/8 项规则）'],
+   ];
+   let html = '<div class="result-head"><div><h4>' + esc(n.title) + '</h4>' +
+-    '<div class="muted">共识别 ' + n.date_candidates.length + ' 个日期、' + n.locations.length + ' 处地点，耗时 ' + n.parse_ms + 'ms · 引擎 ' + esc(n.extract_engine || 'local-rules') + '</div>' +
++    '<div class="muted">共识别 ' + n.date_candidates.length + ' 个日期、' + n.locations.length + ' 处地点，耗时 ' + n.parse_ms + 'ms · 引擎 ' + esc(n.extract_engine || 'local-rules') + ' · 导入 ' + esc(IMPORT_LABEL[n.import_type] || '手动粘贴') + '</div>' +
+     '<div class="conf-track"><div class="conf-fill" style="width:' + n.confidence + '%"></div></div></div>' +
+     '<span class="tag ' + (n.confidence >= 75 ? 'tag-ok' : 'tag-warn') + '">' + (n.confidence >= 75 ? '解析良好' : '建议复核') + '</span></div>';
+   html += '<div class="field-grid">' + fields.map(([k, v, em]) =>
+     '<div class="field"><label>' + k + '</label><strong class="' + (em ? 'em' : '') + '">' + esc(v) + '</strong></div>').join('') + '</div>';
+   if ((n.tags || []).length) html += '<div class="tag-row">' + n.tags.map((t) => '<span class="tag tag-blue">' + esc(t) + '</span>').join('') + '</div>';
+ 
++  if (n.duplicate_hint && n.duplicate_hint.detected) {
++    html += '<div class="band band-warn"><svg><use href="#i-alert"/></svg><div>' +
++      '<b>疑似重复通知 · CM-FR-109</b><span>检测到 ' + n.duplicate_hint.count +
++      ' 条相似记录，最高相似度 ' + n.duplicate_hint.top_similarity +
++      '%。系统不会自动拒绝，也不会展示他人通知内容，请人工核对后再决定是否保存。</span></div></div>';
++  }
++
+   html += '<div class="result-sub">自动生成的待办 · ' + n.todos.length + ' 项</div>' +
+     n.todos.map((t, i) => '<div class="todo-item"><i>' + (i + 1) + '</i><span>' + esc(t) + '</span></div>').join('');
+   if (n.warnings.length) html += '<div class="warn-list">' + n.warnings.map((w) => '<div>· ' + esc(w) + '</div>').join('') + '</div>';
+@@ -272,6 +353,9 @@ function renderParseResult(n) {
+   html += '<div class="review-box"><div class="review-head"><svg><use href="#i-shield"/></svg><b>③ 人工审核</b><span>规则结果不得未经确认直接执行</span></div>' +
+     '<div class="form-row"><label>校正标题<input id="review-title" maxlength="60" value="' + esc(n.title) + '"></label>' +
+     '<label>校正截止日期<input id="review-deadline" type="date" value="' + esc(n.deadline || '') + '"></label></div>' +
++    '<div class="form-row"><label>提前提醒（分钟 · CM-FR-107）<input id="review-remind" type="number" min="0" max="43200" step="30" value="' + esc(n.remind_minutes ?? 30) + '"></label>' +
++    '<label>导入方式<input value="' + esc(IMPORT_LABEL[n.import_type] || '手动粘贴') + '" readonly></label></div>' +
++    '<div class="hint">0 = 不提醒；1440 = 提前 1 天。提醒会写入导出的 .ics 日历（VALARM）。</div>' +
+     '<label class="review-check"><input type="checkbox" id="review-confirm"><span>我已核对以上字段，确认按此结果生成待办</span></label>' +
+     '<div class="result-actions">' +
+     '<button class="btn btn-primary" id="btn-save-notice"><svg><use href="#i-check"/></svg>确认并保存</button>' +
+@@ -283,6 +367,32 @@ function renderParseResult(n) {
+   $('#parse-conf').className = 'chip ' + (n.confidence >= 75 ? 'good' : 'warn');
+ }
+ 
++function fillReviseSelect() {
++  const sel = $('#revise-notice');
++  if (!sel) return;
++  const prev = sel.value;
++  sel.innerHTML = S.notices.length
++    ? S.notices.map((n) => '<option value="' + esc(n.id) + '">' + esc(n.title) +
++      ' · v' + (n.version || 1) + '</option>').join('')
++    : '<option value="">（还没有已保存的通知）</option>';
++  if (prev && S.notices.some((n) => n.id === prev)) sel.value = prev;
++}
++function renderReviseResult(data) {
++  const changes = data.changes || [];
++  const rows = changes.length
++    ? '<div class="table-wrap"><table class="table"><thead><tr><th>字段</th><th>原版本</th><th>新版本</th></tr></thead><tbody>' +
++      changes.map((c) => '<tr><td><b>' + esc(FIELD_LABEL[c.field] || c.field) + '</b></td>' +
++        '<td>' + esc(c.from) + '</td><td>' + esc(c.to) + '</td></tr>').join('') + '</tbody></table></div>'
++    : '<div class="table-empty"><b>新旧版本字段完全一致</b><br>无需更新，也可以重新贴入不同的原文</div>';
++  $('#revise-result').innerHTML = '<div class="card-head"><h3>字段差异 · ' + changes.length + ' 处</h3>' +
++    '<span class="chip ' + (data.applied ? 'good' : '') + '">' + (data.applied ? '已更新' : '预览中') + '</span></div>' +
++    rows + '<div class="band ' + (data.applied ? 'band-ok' : 'band-info') + '"><svg><use href="#i-info"/></svg><div><b>' +
++    (data.applied ? '已写入 v' + data.notice.version : '尚未写入任何数据') + '</b><span>' +
++    (data.applied ? '旧版本字段快照已保留在该通知的 history 中，可追溯。' :
++      '核对上方差异后点击「确认并更新版本」，才会真正写入。') + '</span></div></div>';
++  $('#btn-revise-apply').classList.toggle('hidden', !!data.applied || !changes.length);
++}
++
+ function fillNoticeFilter() {
+   const sel = $('#notice-filter'), prev = sel.value;
+   const cats = [...new Set(S.notices.map((n) => n.category).filter(Boolean))].sort();
+@@ -301,6 +411,7 @@ function filteredNotices() {
+   });
+ }
+ function renderNoticeList() {
++  fillReviseSelect();
+   $('#notice-total').textContent = S.notices.length + ' 条';
+   const list = filteredNotices();
+   if (!S.notices.length) {
+@@ -320,7 +431,11 @@ function renderNoticeList() {
+     (n.issuer ? '<span><b>发布</b> ' + esc(n.issuer) + '</span>' : '') +
+     (n.event_date ? '<span><b>时间</b> ' + esc(n.event_date + (n.event_time ? ' ' + n.event_time : '')) + '</span>' : '') +
+     (n.location ? '<span><b>地点</b> ' + esc(n.location) + '</span>' : '') +
+-    (n.deadline ? '<span><b>截止</b> ' + esc(n.deadline) + '</span>' : '') +
++    (n.deadline ? '<span><b>截止</b> ' + esc(n.deadline) + ' · ' + esc(deadlineText(n.deadline)) + '</span>' : '') +
++    '<span><b>版本</b> v' + (n.version || 1) + '</span>' +
++    '<span><b>导入</b> ' + esc(IMPORT_LABEL[n.import_type] || '手动粘贴') + '</span>' +
++    (n.duplicate_hint && n.duplicate_hint.detected
++      ? '<span class="tag tag-warn">疑似重复 ' + n.duplicate_hint.top_similarity + '%</span>' : '') +
+     (n.owner_name ? '<span><b>录入</b> ' + esc(n.owner_name) + '</span>' : '') +
+     '<span>提取于 ' + esc(String(n.created_at).slice(0, 10)) + '</span></div>' +
+     ((n.materials || []).length ? '<div class="notice-meta"><span><b>所需材料</b> ' + esc(n.materials.join('、')) + '</span></div>' : '') +
+@@ -427,15 +542,19 @@ function renderMistakes() {
+ 
+ /* ------------------------------ 使用反馈 ------------------------------ */
+ function renderFeedback() {
+-  const n = S.feedback.length;
++  // 进度是全局真实条数；明细仍按角色隔离（学生看不到他人反馈正文）
++  const n = Math.max(S.feedback.length, S.feedbackProgress);
+   $('#fb-progress').textContent = n + ' / 8';
+   $('#fb-progress-bar').style.width = Math.min(100, n / 8 * 100) + '%';
+   if (!can('feedback.list')) return;
+-  $('#fb-list').innerHTML = n ? S.feedback.map((f) =>
++  $('#fb-list').innerHTML = S.feedback.length ? S.feedback.map((f) =>
+     '<div class="fb-card"><div class="fb-head"><span>' + esc(f.role) + ' · ' + esc(f.module) + '</span>' +
+     '<span class="tag ' + (f.score >= 4 ? 'tag-ok' : f.score >= 3 ? 'tag-warn' : 'tag-bad') + '">' + f.score + ' 分</span></div>' +
++    (f.task_done ? '<p><b>实际任务：</b>' + esc(f.task_done) + '</p>' : '') +
+     (f.liked ? '<p><b>有帮助：</b>' + esc(f.liked) + '</p>' : '') +
++    (f.problem ? '<p><b>问题：</b>' + esc(f.problem) + '</p>' : '') +
+     (f.suggestion ? '<p><b>建议：</b>' + esc(f.suggestion) + '</p>' : '') +
++    (f.reuse ? '<p><b>再用意愿：</b>' + esc(f.reuse) + '</p>' : '') +
+     '<p class="muted">' + esc(String(f.created_at).slice(0, 16).replace('T', ' ')) + '</p></div>').join('')
+     : '<div class="table-empty">还没有收到反馈，请邀请同学真实试用后填写</div>';
+ }
+@@ -478,11 +597,29 @@ function bindEvents() {
+   }));
+ 
+   /* 通知：提取 + 人工审核 */
+-  $('#notice-input').addEventListener('input', (e) => { $('#notice-count').textContent = e.target.value.length; });
++  $('#notice-input').addEventListener('input', (e) => {
++    $('#notice-count').textContent = e.target.value.length;
++    // 用户手动改动原文时回到「粘贴」；文件导入触发的合成事件不重置来源
++    if (e.isTrusted) {
++      S.importType = 'paste';
++      $('#import-info').textContent = '手动粘贴 · 未选择文件';
++    }
++  });
++  $('#notice-file').addEventListener('change', (e) => {
++    importFile(e.target.files && e.target.files[0]);
++    e.target.value = ''; // 允许重复选择同一文件
++  });
++  const ta = $('#notice-input');
++  ta.addEventListener('dragover', (e) => { e.preventDefault(); ta.classList.add('drag-over'); });
++  ta.addEventListener('dragleave', () => ta.classList.remove('drag-over'));
++  ta.addEventListener('drop', (e) => {
++    e.preventDefault(); ta.classList.remove('drag-over');
++    importFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
++  });
+   $('#btn-parse').addEventListener('click', guard(async () => {
+     const text = $('#notice-input').value.trim();
+-    if (!text) { toast('请先粘贴通知内容', true); return; }
+-    const n = await api('notice/parse', { method: 'POST', body: { text } });
++    if (!text) { toast('请先粘贴或导入通知内容', true); return; }
++    const n = await api('notice/parse', { method: 'POST', body: { text, import_type: S.importType } });
+     S.parsed = n; renderParseResult(n); toast('解析完成，置信度 ' + n.confidence + '%，请人工审核');
+   }));
+   $('#parse-result').addEventListener('click', guard(async (e) => {
+@@ -492,13 +629,18 @@ function bindEvents() {
+         ...S.parsed,
+         title: ($('#review-title').value || '').trim() || S.parsed.title,
+         deadline: $('#review-deadline').value || '',
++        remind_minutes: Math.max(0, Math.min(43200, Number($('#review-remind').value) || 0)),
+         reviewed: true, reviewed_at: new Date().toISOString(),
+       };
+       await api('notice/save', { method: 'POST', body: { notice: n } });
+       toast('已确认并保存到待办'); refreshView('notice'); switchView('notice');
+     } else if (e.target.closest('#btn-ics-preview')) {
+-      downloadText('campus-notice.ics', S.parsed.ics, 'text/calendar;charset=utf-8');
+-      toast('已导出日历文件');
++      const r = await api('notice/preview', { method: 'POST', body: {
++        notice: S.parsed,
++        remind_minutes: Math.max(0, Math.min(43200, Number($('#review-remind').value) || 0)),
++      } });
++      downloadText('campus-notice.ics', r.ics, 'text/calendar;charset=utf-8');
++      toast('已导出日历文件（提前 ' + r.remind_minutes + ' 分钟提醒）');
+     } else if (e.target.closest('#btn-copy-md')) {
+       const n = S.parsed;
+       const md = '## ' + n.title + '\n\n- 分类：' + n.category + '\n- 重要程度：' + (n.importance || '普通') +
+@@ -526,6 +668,25 @@ function bindEvents() {
+     else if (del) { await api('notice/delete', { method: 'DELETE', body: { id: del.dataset.delNotice } }); toast('已删除'); refreshView('notice'); }
+   }));
+ 
++  /* 版本比对：先预览差异，人工确认后才写入（CM-FR-110） */
++  $('#btn-revise-preview').addEventListener('click', guard(async () => {
++    const id = $('#revise-notice').value, text = $('#revise-text').value.trim();
++    if (!id) { toast('请先保存一条通知，再比对新版本', true); return; }
++    if (!text) { toast('请粘贴修订后的通知原文', true); return; }
++    const r = await api('notice/revise', { method: 'POST', body: { id, text } });
++    S.revise = { id, text };
++    renderReviseResult(r);
++    toast('已生成字段差异，请核对后再确认');
++  }));
++  $('#btn-revise-apply').addEventListener('click', guard(async () => {
++    if (!S.revise) { toast('请先比对字段差异', true); return; }
++    const r = await api('notice/revise', { method: 'POST', body: { ...S.revise, apply: true } });
++    renderReviseResult(r);
++    S.revise = null;
++    await refreshView('notice');
++    toast('已更新为 v' + r.notice.version + '，旧版本快照已保留');
++  }));
++
+   /* 器材 */
+   $('#form-loan').addEventListener('submit', guard(async (e) => {
+     e.preventDefault();
+@@ -592,9 +753,12 @@ function bindEvents() {
+     e.preventDefault();
+     await api('feedback/add', { method: 'POST', body: {
+       role: $('#fb-role').value, module: $('#fb-module').value, score: Number($('#fb-score').value),
++      task_done: $('#fb-task').value, problem: $('#fb-problem').value,
+       liked: $('#fb-liked').value, suggestion: $('#fb-suggestion').value,
++      reuse: $('#fb-reuse').value,
+     } });
+-    ['#fb-role', '#fb-liked', '#fb-suggestion'].forEach((s) => { $(s).value = ''; });
++    ['#fb-role', '#fb-task', '#fb-problem', '#fb-liked', '#fb-suggestion', '#fb-reuse']
++      .forEach((s) => { $(s).value = ''; });
+     toast('感谢反馈，已记录'); refreshView('feedback');
+   }));
+ }
+diff --git a/public/user/index.html b/public/user/index.html
+index f3d85e4..ab6abdb 100644
+--- a/public/user/index.html
++++ b/public/user/index.html
+@@ -143,7 +143,7 @@
+         </div>
+ 
+         <div class="flow-steps">
+-          <div class="flow-step"><i>1</i><div><b>导入原文</b><span>手动粘贴 · 本地处理</span></div></div>
++          <div class="flow-step"><i>1</i><div><b>导入原文</b><span>5 种方式 · 本地处理</span></div></div>
+           <div class="flow-step"><i>2</i><div><b>结构化提取</b><span>12 类字段 · 规则判定</span></div></div>
+           <div class="flow-step"><i>3</i><div><b>人工审核</b><span>CM-FR-105 · 确认后才入库</span></div></div>
+           <div class="flow-step"><i>4</i><div><b>生成待办</b><span>清单 / 日历 / Markdown</span></div></div>
+@@ -151,7 +151,14 @@
+ 
+         <div class="two-col uneven">
+           <div class="card">
+-            <div class="card-head"><div><h3>① 原始通知</h3><div class="card-sub">原文只在浏览器与本机服务之间传递</div></div><span class="chip">本地解析</span></div>
++            <div class="card-head"><div><h3>① 原始通知</h3><div class="card-sub">CM-FR-101 · 5 种文本导入，全部在浏览器本地读取</div></div><span class="chip">本地解析</span></div>
++            <div class="import-bar">
++              <label class="file-btn" for="notice-file"><svg><use href="#i-download"/></svg>选择文件</label>
++              <input type="file" id="notice-file" class="sr-file"
++                accept=".txt,.md,.markdown,.csv,.json,text/plain,text/markdown,text/csv,application/json">
++              <span class="import-types">粘贴 · .txt · .md · .csv · .json</span>
++              <span class="hint" id="import-info">也可把文件直接拖到下方文本框</span>
++            </div>
+             <textarea id="notice-input" class="textarea" rows="9" placeholder="把通知原文粘贴到这里…&#10;例如：请各班班长于11月14日下午14:30到教学楼A301参加会议，并带上名单。"></textarea>
+             <div class="row-between">
+               <span class="hint"><span id="notice-count">0</span> 字 · 不上传任何内容</span>
+@@ -159,7 +166,7 @@
+             </div>
+             <div class="band band-info" style="margin-top:16px">
+               <svg><use href="#i-info"/></svg>
+-              <div><b>导入方式说明</b><span>当前版本支持「手动粘贴文本」一种。SRS 中的 PDF / Word / TXT / 图片导入与本地 OCR 属后续阶段，见「项目与功能地图」。</span></div>
++              <div><b>导入方式说明 · 5 种</b><span>手动粘贴、.txt、.md、.csv、.json 均零依赖本地解析；.csv 按行合并单元格文本，.json 优先取 text / content / body 字段。PDF / Word / JPG / PNG 需要本地 OCR 与文档解析库，仍属后续阶段，不提供点了没反应的假按钮。</span></div>
+             </div>
+           </div>
+           <div class="card">
+@@ -184,6 +191,29 @@
+           </div>
+           <div id="notice-list"></div>
+         </div>
++
++        <div class="card" style="margin-top:16px">
++          <div class="card-head">
++            <div><h3>⑤ 通知变更追踪</h3><div class="card-sub">CM-FR-110 · 贴入修订版原文，先比对字段差异，人工确认后才更新版本</div></div>
++            <span class="chip">人工确认</span>
++          </div>
++          <div class="two-col uneven">
++            <div class="form">
++              <label>选择已保存的通知<select id="revise-notice"></select></label>
++              <label>新版本原文<textarea id="revise-text" class="textarea" rows="6" placeholder="把修订后的通知原文粘贴到这里…"></textarea></label>
++              <div class="head-actions">
++                <button class="btn btn-soft" id="btn-revise-preview">比对字段差异</button>
++                <button class="btn btn-primary hidden" id="btn-revise-apply">确认并更新版本</button>
++              </div>
++              <div class="hint">比对结果不会直接入库；确认后旧版本快照保留在记录的 history 中，可追溯。</div>
++            </div>
++            <div id="revise-result" class="empty-state">
++              <div class="empty-icon"><svg><use href="#i-notice"/></svg></div>
++              <p>选择一条已保存的通知，贴入修订后的原文</p>
++              <span>先「比对字段差异」，核对无误再「确认并更新版本」</span>
++            </div>
++          </div>
++        </div>
+       </section>
+ 
+       <!-- ============ 实验器材 · CM-FR-201~210 ============ -->
+@@ -356,9 +386,12 @@
+                 <label>使用者身份<input id="fb-role" required placeholder="如：大二学生 / 班长" maxlength="20"></label>
+                 <label>主要使用的模块<select id="fb-module"><option>整体</option><option>通知提取</option><option>器材借还</option><option>错题归档</option><option>管理后台</option></select></label>
+               </div>
++              <label>实际完成的任务<input id="fb-task" maxlength="160" placeholder="如：导入一条通知并人工审核确认"></label>
+               <label>好用程度（1–5 分）<select id="fb-score"><option value="5">5 · 很好用</option><option value="4">4 · 基本顺手</option><option value="3">3 · 一般</option><option value="2">2 · 不太好</option><option value="1">1 · 很难用</option></select></label>
+               <label>最有帮助的地方<textarea id="fb-liked" rows="2" maxlength="160" placeholder="哪一步真的省了你的时间？"></textarea></label>
++              <label>遇到的问题 / 卡住的地方<textarea id="fb-problem" rows="2" maxlength="160" placeholder="哪一步没看懂、报错或没找到入口？"></textarea></label>
+               <label>建议改进<textarea id="fb-suggestion" rows="2" maxlength="160" placeholder="哪里卡住了、还缺什么？"></textarea></label>
++              <label>是否愿意再次使用<select id="fb-reuse"><option value="">未选择</option><option>愿意</option><option>不确定</option><option>不愿意</option></select></label>
+               <button class="btn btn-primary full" type="submit"><svg><use href="#i-plus"/></svg>提交真实反馈</button>
+             </form>
+           </div>
+@@ -386,11 +419,12 @@
+           <div class="table-wrap"><table class="table roadmap"><thead><tr><th>SRS 编号</th><th>需求</th><th>状态</th><th>当前交付说明</th></tr></thead><tbody>
+             <tr><td class="nowrap">CM-FR-001</td><td>首页仪表盘</td><td><span class="st st-ok">已实现</span></td><td>7 项指标 + 最近操作记录，全部来自真实数据</td></tr>
+             <tr><td class="nowrap">CM-FR-102 / 103 / 104</td><td>字段提取 / 分类 / 重要程度</td><td><span class="st st-ok">已实现</span></td><td>本地规则引擎，12 类字段，置信度与告警可见</td></tr>
+-            <tr><td class="nowrap">CM-FR-101</td><td>5 种导入方式</td><td><span class="st st-part">部分实现</span></td><td>已支持手动粘贴文本；PDF / Word / TXT / 图片导入待接入</td></tr>
+-            <tr><td class="nowrap">CM-FR-105 / 106 / 107</td><td>人工审核 / 待办 / 提醒</td><td><span class="st st-part">部分实现</span></td><td>审核后生成待办与 .ics 日历；自定义提前提醒待接入</td></tr>
+-            <tr><td class="nowrap">CM-FR-108 / 109 / 110</td><td>搜索 / 查重 / 版本追踪</td><td><span class="st st-part">部分实现</span></td><td>已支持标题、类别、状态检索；查重与版本比对待接入</td></tr>
++            <tr><td class="nowrap">CM-FR-101</td><td>5 种导入方式</td><td><span class="st st-ok">已实现</span></td><td>手动粘贴 + .txt / .md / .csv / .json 共 5 种文本导入；PDF / Word / 图片需 OCR，规划中</td></tr>
++            <tr><td class="nowrap">CM-FR-105 / 106 / 107</td><td>人工审核 / 待办 / 提醒</td><td><span class="st st-ok">已实现</span></td><td>审核勾选后才入库；支持自定义提前提醒并写入 .ics 的 VALARM，0 表示不提醒</td></tr>
++            <tr><td class="nowrap">CM-FR-108 / 109 / 110</td><td>搜索 / 查重 / 版本追踪</td><td><span class="st st-ok">已实现</span></td><td>标题/类别/状态检索；3-gram 相似度查重提示；版本快照 + 字段差异 + 确认后更新</td></tr>
+             <tr><td class="nowrap">CM-FR-201 ~ 206</td><td>器材档案 / 借还 / 库存 / 逾期</td><td><span class="st st-ok">已实现</span></td><td>完整借出、部分归还、库存重算、逾期标记</td></tr>
+-            <tr><td class="nowrap">CM-FR-202 / 207 ~ 210</td><td>二维码 / 异常 / 盘点 / 统计 / 审计</td><td><span class="st st-plan">规划中</span></td><td>当前保留操作流水；独立审计表与盘点单待建立</td></tr>
++            <tr><td class="nowrap">CM-FR-210 / 4.3</td><td>操作审计 / 备份完整性</td><td><span class="st st-ok">已实现</span></td><td>写操作自动留脱敏审计；管理端可导出带 SHA256 的业务快照并校验、按需恢复</td></tr>
++            <tr><td class="nowrap">CM-FR-202 / 207 ~ 209</td><td>二维码 / 异常 / 盘点 / 使用统计</td><td><span class="st st-plan">规划中</span></td><td>需盘点单与二维码库，当前保留操作流水，不做空壳按钮</td></tr>
+             <tr><td class="nowrap">CM-FR-301 ~ 308</td><td>AI 错题管理</td><td><span class="st st-part">部分实现</span></td><td>手动录入 + 复习队列 + 掌握统计；OCR / 模型解题待接入</td></tr>
+             <tr><td class="nowrap">CM-FR-401 ~ 407</td><td>AI 校园问答 / RAG</td><td><span class="st st-plan">规划中</span></td><td>见「智能助手」页，不提供空壳对话</td></tr>
+             <tr><td class="nowrap">CM-FR-501 ~ 510</td><td>运行监控</td><td><span class="st st-ok">已实现</span></td><td>自动脱敏日志、耗时、错误码、每日报告、健康检查、导出</td></tr>
+diff --git a/scripts/daily-report.js b/scripts/daily-report.js
+index bce1466..d6f9115 100644
+--- a/scripts/daily-report.js
++++ b/scripts/daily-report.js
+@@ -25,9 +25,11 @@ const prevDay = (() => {
+ const prevRows = telemetry.readDay(prevDay);
+ 
+ function stat(list) {
+-  const byModule = {}, byAction = {}, byStatus = {}, byErrorCode = {}, byRole = {};
++  const byModule = {}, byAction = {}, byStatus = {}, byErrorCode = {}, byRole = {}, bySource = {};
+   let errs = [];
+   for (const r of list) {
++    const src = r.source || 'legacy';
++    bySource[src] = (bySource[src] || 0) + 1;
+     byModule[r.module] = (byModule[r.module] || 0) + 1;
+     byAction[r.action] = (byAction[r.action] || 0) + 1;
+     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+@@ -41,7 +43,7 @@ function stat(list) {
+   const ds = list.map((r) => r.duration_ms).sort((a, b) => a - b);
+   const avg = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : 0;
+   return {
+-    total: list.length, byModule, byAction, byStatus, byErrorCode, byRole, errs,
++    total: list.length, byModule, byAction, byStatus, byErrorCode, byRole, bySource, errs,
+     avg: Math.round(avg * 100) / 100,
+     p95: ds.length ? ds[Math.floor(ds.length * 0.95)] : 0,
+     max: ds.length ? ds[ds.length - 1] : 0,
+@@ -51,6 +53,8 @@ function stat(list) {
+ }
+ 
+ const s = stat(rows), ps = stat(prevRows);
++const streak = telemetry.streakInfo();
++const generatedAt = new Date().toISOString();
+ const table = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1])
+   .map(([k, v]) => '| ' + k + ' | ' + v + ' |').join('\n') || '| （无） | 0 |';
+ const delta = s.total - ps.total;
+@@ -71,6 +75,37 @@ const md = [
+   '| 最慢一次 (ms) | ' + s.max + ' | ' + ps.max + ' | — |',
+   '| 报错次数 | ' + (s.byStatus.error || 0) + ' | ' + (ps.byStatus.error || 0) + ' | — |',
+   '| 首次 / 末次调用 | ' + s.first + ' | — | ' + s.last + ' |',
++  '| 截至行数 / 日志来源 | ' + rows.length + ' 行 | — | ' +
++    Object.entries(s.bySource).map(([k, v]) => k + ':' + v).join(' / ') + ' |',
++  '',
++  '> 本文件是 **' + generatedAt + '** 生成时的静态快照：此后新产生的访问不会回写本日报，' +
++  '次日或收工前重新运行 `node scripts/daily-report.js` 会覆盖为最新口径。原始记录以 `process_logs/' + day + '.jsonl` 为准。',
++  '',
++  '## 连续运行达标自检 · 验收指标 8.2',
++  '',
++  '| 项目 | 当前值 | 说明 |',
++  '| --- | ---: | --- |',
++  '| 已有日期文件 | ' + streak.days_count + ' 天 | ' + (streak.days.join('、') || '（无）') + ' |',
++  '| **当前连续天数** | **' + streak.current_streak + ' 天** | 验收要求连续 ≥ 7 天，按「连续」而非「累计」判定 |',
++  '| 历史最长连续 | ' + streak.longest_streak + ' 天 | ' + (streak.longest_start ? streak.longest_start + ' → ' + streak.longest_end : '—') + ' |',
++  '| 达标状态 | ' + (streak.target_met ? '已达标' : '未达标') + ' | ' +
++    (streak.target_met ? '可提交 7 天运行报告' : '从 ' + (streak.current_start || day) +
++      ' 起还需连续使用到 **' + streak.target_date + '**（再 ' + streak.remaining_days + ' 天）') + ' |',
++  '',
++  '断档明细：' + (streak.gaps.length
++    ? streak.gaps.map((g) => g.from + ' → ' + g.to + ' 缺 ' + g.missing + ' 天').join('；')
++    : '无'),
++  '',
++  '> 断档不能用「累计天数」代替，也不能补造历史日志。每天实际使用一次并运行 `node scripts/daily-report.js --sync` 即可自然累积。',
++  '',
++  '## 日志来源与口径',
++  '',
++  '| 来源 | 今日次数 |', '| --- | ---: |', table(s.bySource),
++  '',
++  '> `live` = 真实页面/接口访问；`legacy` = v6.1 之前写入、未带来源标记的历史记录；' +
++  '`smoke` = 冒烟测试。自 v6.1 起测试进程通过 `CAMPUSDESK_LOG_DIR` 写入隔离目录，**不再进入本日报**。' +
++  '历史 `legacy` 记录中含测试故意触发的 `FORBIDDEN` / `BAD_CREDENTIALS` / `OUT_OF_STOCK` 等错误码，' +
++  '因此累计错误率会偏高，评估程序稳定性时请以新日志为准。',
+   '',
+   '## 调用频次 · 按模块',
+   '', '| 模块 | 次数 |', '| --- | ---: |', table(s.byModule),
+@@ -90,18 +125,22 @@ const errRows = Object.entries(s.byErrorCode).sort((a, b) => b[1] - a[1])
+   .map(([k, v]) => '| ' + k + ' | ' + v + ' |').join('\n');
+ md.push('', '### 错误码分布', '', '| 错误码 | 次数 |', '| --- | ---: |', errRows || '| （无） | 0 |');
+ md.push('', '## 数据文件状态', '', '| 数据集 | 条数 |', '| --- | ---: |');
+-for (const name of ['notices', 'equipment', 'loans', 'mistakes', 'feedback']) {
++for (const name of ['notices', 'equipment', 'loans', 'mistakes', 'feedback', 'audit']) {
+   const file = path.join(ROOT, 'data', name + '.json');
+   let count = 0;
+   try { const v = JSON.parse(fs.readFileSync(file, 'utf8')); count = Array.isArray(v) ? v.length : 0; } catch (_) {}
+   md.push('| ' + name + '.json | ' + count + ' |');
+ }
+-md.push('', '---', '', '生成时间：' + new Date().toISOString(), '');
++md.push('', '---', '', '生成时间：' + generatedAt,
++  '数据口径：原始 jsonl 为准；业务数据 data/ 已被 .gitignore 排除，本日报只统计条数。', '');
+ 
+ const outFile = path.join(telemetry.LOG_DIR, 'summary-' + day + '.md');
+ fs.writeFileSync(outFile, md.join('\n'), 'utf8');
+ console.log('[daily-report] 已生成 ' + outFile);
+ console.log('[daily-report] 今日调用 ' + s.total + ' 次，平均 ' + s.avg + 'ms，报错 ' + (s.byStatus.error || 0) + ' 次');
++console.log('[daily-report] 连续运行 ' + streak.current_streak + '/7 天' +
++  (streak.target_met ? '（已达标）' : '（未达标，需连续到 ' + streak.target_date + '）') +
++  '；历史最长 ' + streak.longest_streak + ' 天，断档 ' + streak.gaps.length + ' 处');
+ 
+ if (doSync) {
+   try {
+diff --git a/scripts/smoke-test.js b/scripts/smoke-test.js
+index 948c361..9fd52aa 100644
+--- a/scripts/smoke-test.js
++++ b/scripts/smoke-test.js
+@@ -18,6 +18,8 @@ const ROOT = path.join(__dirname, '..');
+ const PORT = 5199;
+ const BASE = 'http://127.0.0.1:' + PORT;
+ const SMOKE_DIR = path.join(ROOT, 'data', '__smoke__');
++// 测试产生的调用与故意触发的报错必须写入隔离日志目录，绝不混进真实 process_logs/
++const SMOKE_LOG_DIR = path.join(ROOT, 'process_logs', '__smoke__');
+ const results = [];
+ 
+ /** 每个会话独立保存 Cookie，模拟不同角色同时在线 */
+@@ -26,7 +28,7 @@ function makeSession() {
+   return {
+     get cookie() { return cookie; },
+     async req(method, urlPath, body, opts) {
+-      const headers = { 'Content-Type': 'application/json' };
++      const headers = { 'Content-Type': 'application/json', ...((opts && opts.headers) || {}) };
+       if (cookie) headers.Cookie = cookie;
+       const res = await fetch(BASE + urlPath, {
+         method, headers,
+@@ -98,11 +100,14 @@ function streamReader(res) {
+ }
+ 
+ async function main() {
+-  console.log('\n== CampusDesk 冒烟测试（v6 · SRS 功能域重构 + 双端企业级界面）==\n');
++  console.log('\n== CampusDesk 冒烟测试（v6.1 · 日志隔离 / 5 种导入 / 审计备份 / 双端界面）==\n');
+   if (!fs.existsSync(SMOKE_DIR)) fs.mkdirSync(SMOKE_DIR, { recursive: true });
++  if (!fs.existsSync(SMOKE_LOG_DIR)) fs.mkdirSync(SMOKE_LOG_DIR, { recursive: true });
++  const mainLogBefore = telemetry.readDay(telemetry.localDay()).length;
+   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+     cwd: ROOT, stdio: 'ignore',
+-    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR },
++    env: { ...process.env, PORT: String(PORT), CAMPUSDESK_DATA_DIR: SMOKE_DIR,
++      CAMPUSDESK_LOG_DIR: SMOKE_LOG_DIR, CAMPUSDESK_LOG_SOURCE: 'smoke' },
+   });
+ 
+   const anon = makeSession();      // 未登录
+@@ -117,6 +122,16 @@ async function main() {
+     /* ---------- 零预置数据 + 首次初始化 ---------- */
+     const h = await anon.req('GET', '/api/health');
+     check('服务健康检查', h.data.ok && h.data.initialized === false, 'version=' + h.data.version);
++    check('测试日志写入隔离目录，真实日志不被污染',
++      h.data.log_source === 'smoke' && String(h.data.log_dir).includes('__smoke__') &&
++      telemetry.readDay(telemetry.localDay()).every((r) => r.source !== 'smoke'),
++      'log_dir=' + h.data.log_dir);
++    check('连续天数自检来自真实日期文件', typeof h.data.streak === 'number',
++      'streak=' + h.data.streak);
++    check('安全响应头已下发（CSP 脚本白名单 / Referrer-Policy）',
++      String(h.headers.get('content-security-policy') || '').includes("script-src 'self'") &&
++      h.headers.get('referrer-policy') === 'same-origin',
++      'CSP=' + (h.headers.get('content-security-policy') || '').slice(0, 30) + '…');
+     const state = await anon.req('GET', '/api/auth/state');
+     check('首次启动未预置任何账号', state.data.initialized === false && state.data.user === null);
+     const unauth = await anon.req('GET', '/api/bootstrap');
+@@ -267,6 +282,9 @@ async function main() {
+       Array.isArray(ov.data.checks) && ov.data.checks.length === 6 &&
+       typeof ov.data.resources.rss_mb === 'number' && ov.data.checks.every((c) => typeof c.ok === 'boolean'),
+       ov.data.checks.filter((c) => c.ok).length + '/' + ov.data.checks.length + ' 项通过');
++    check('管理总览含连续天数自检对象', !!ov.data.streak &&
++      typeof ov.data.streak.current_streak === 'number' && Array.isArray(ov.data.streak.gaps),
++      '连续 ' + ov.data.streak.current_streak + ' 天 / 累计 ' + ov.data.streak.days_count + ' 天');
+     check('版本时间线来自真实 git log', Array.isArray(ov.data.git_commits), (ov.data.git_commits || []).length + ' 条提交');
+     check('日报文件清单可读', Array.isArray(ov.data.report_files));
+ 
+@@ -283,6 +301,91 @@ async function main() {
+     const sumRoles = await admin.req('GET', '/api/admin/summary?days=7');
+     check('日志按角色聚合可用', Object.keys(sumRoles.data.by_role || {}).length >= 1, JSON.stringify(sumRoles.data.by_role));
+ 
++    /* ---------- v6.1 · 日志隔离之外的新增真实能力 ---------- */
++    for (const t of ['paste', 'txt', 'md', 'csv', 'json']) {
++      const r = await student.req('POST', '/api/notice/parse', {
++        text: extractor.SAMPLES[1].text, import_type: t,
++      });
++      check('CM-FR-101 导入方式 ' + t, r.status === 200 && r.data.import_type === t);
++    }
++    const badImport = await student.req('POST', '/api/notice/parse', {
++      text: extractor.SAMPLES[1].text, import_type: 'pdf',
++    });
++    check('未实现的导入类型如实回退为手动粘贴', badImport.data.import_type === 'paste');
++
++    const dupParse = await student.req('POST', '/api/notice/parse', { text: extractor.SAMPLES[0].text });
++    check('CM-FR-109 重复通知识别（只给相似度，不泄露他人原文）',
++      dupParse.data.duplicate_hint && dupParse.data.duplicate_hint.detected === true &&
++      dupParse.data.duplicate_hint.top_similarity >= 90 &&
++      !('duplicate_title' in dupParse.data.duplicate_hint),
++      'top=' + dupParse.data.duplicate_hint.top_similarity + '%');
++
++    const icsDay = await student.req('POST', '/api/notice/preview', {
++      notice: dupParse.data, remind_minutes: 1440,
++    });
++    check('CM-FR-107 自定义提前提醒写入 .ics', String(icsDay.data.ics).includes('TRIGGER:-P1D'));
++    const icsNone = await student.req('POST', '/api/notice/preview', {
++      notice: dupParse.data, remind_minutes: 0,
++    });
++    check('提醒设为 0 时不生成 VALARM', !String(icsNone.data.ics).includes('VALARM'));
++
++    const revisedText = extractor.SAMPLES[0].text.replace('A301', 'B205');
++    const preview = await student.req('POST', '/api/notice/revise', { id: savedId, text: revisedText });
++    check('CM-FR-110 版本比对先预览、不直接落库',
++      preview.status === 200 && preview.data.applied === false &&
++      Array.isArray(preview.data.changes) && preview.data.changes.length > 0,
++      preview.data.changes.length + ' 处字段变化');
++    const applied = await student.req('POST', '/api/notice/revise', {
++      id: savedId, text: revisedText, apply: true,
++    });
++    check('CM-FR-110 人工确认后写入 v2 并保留历史快照',
++      applied.data.applied === true && applied.data.notice.version === 2 &&
++      applied.data.notice.history.length === 1);
++
++    const fb2 = await student.req('POST', '/api/feedback/add', {
++      role: '大二学生', module: '通知提取', score: 5,
++      task_done: '导入并人工审核了一条通知', problem: '希望尽快支持 Word 导入', reuse: '愿意',
++    });
++    check('反馈字段对齐 8 份问卷（实际任务 / 问题 / 再用意愿）',
++      !!fb2.data.task_done && !!fb2.data.problem && fb2.data.reuse === '愿意');
++    const prog = await student.req('GET', '/api/feedback/progress');
++    check('收集进度对所有登录用户可见（只有数量）',
++      prog.status === 200 && prog.data.collected === 2 && prog.data.target === 8 &&
++      !('items' in prog.data));
++    const fbAdmin = await admin.req('GET', '/api/admin/feedback');
++    check('管理端可查看反馈明细', fbAdmin.status === 200 && fbAdmin.data.items.length === 2 &&
++      fbAdmin.data.items.some((f) => f.task_done));
++
++    const au = await admin.req('GET', '/api/admin/audit');
++    check('CM-FR-210 业务审计真实记录且不含原文 / 姓名',
++      au.status === 200 && au.data.items.length > 0 &&
++      au.data.items.every((x) => !('raw_text' in x) && !('owner_name' in x) &&
++        !('text' in x) && !('title' in x)), au.data.items.length + ' 条');
++
++    const snap = await admin.req('GET', '/api/admin/backup');
++    check('4.3 业务数据备份快照含 checksum 与数据集',
++      snap.status === 200 && snap.data.format === 'campusdesk-backup' &&
++      /^[a-f0-9]{64}$/.test(snap.data.checksum || '') && !!snap.data.datasets.notices);
++    const verify = await admin.req('POST', '/api/admin/backup/verify', { backup: snap.data });
++    check('备份完整性校验通过（SHA256 重算）', verify.status === 200 && verify.data.ok === true);
++    const tampered = await admin.req('POST', '/api/admin/backup/verify', {
++      backup: { ...snap.data, checksum: '0'.repeat(64) },
++    });
++    check('被篡改的备份校验不通过且不写入数据',
++      tampered.status === 200 && tampered.data.ok === false && tampered.data.checksum_matched === false);
++    const noConfirm = await admin.req('POST', '/api/admin/backup/restore', { backup: snap.data });
++    check('恢复必须显式确认', noConfirm.status === 400 && noConfirm.data.error === 'RESTORE_NOT_CONFIRMED');
++    const restore = await admin.req('POST', '/api/admin/backup/restore', {
++      backup: snap.data, confirm: 'RESTORE',
++    });
++    check('确认后恢复业务数据（不动账号与会话）', restore.status === 200 && restore.data.ok === true);
++
++    const csrf = await anon.req('POST', '/api/auth/login', {
++      username: 'smoke_admin', password: 'Admin2026x',
++    }, { headers: { Origin: 'http://evil.example' } });
++    check('跨站 Origin 写请求被 CSRF 校验拦截',
++      csrf.status === 403 && csrf.data.error === 'CSRF_ORIGIN_MISMATCH');
++
+     /* ---------- 三套独立入口、页面级越权与旧链接兼容 ---------- */
+     const manual = { redirect: 'manual' };
+     const coverPage = await anon.req('GET', '/', undefined, manual);
+@@ -303,15 +406,17 @@ async function main() {
+     check('入口脚本资源可访问', portalJs.status === 200);
+ 
+     const uPage = await student.req('GET', '/user/index.html', undefined, manual);
+-    check('用户端 v6 八大视图与企业级组件齐备',
+-      ['view-dashboard', 'view-notice', 'view-equipment', 'view-mistake', 'view-assistant', 'view-activity', 'view-feedback', 'view-about']
++    check('用户端八大视图与 v6.1 新组件齐备',
++      ['view-dashboard', 'view-notice', 'view-equipment', 'view-mistake', 'view-assistant', 'view-activity', 'view-feedback', 'view-about',
++        'notice-file', 'import-info', 'revise-notice', 'revise-text', 'btn-revise-preview',
++        'fb-task', 'fb-problem', 'fb-reuse', 'sys-strip']
+         .every((id) => String(uPage.data).includes('id="' + id + '"')) &&
+-      String(uPage.data).includes('id="sys-strip"') && String(uPage.data).includes('CM-FR-001'));
++      String(uPage.data).includes('CM-FR-001'));
+     const aPage = await admin.req('GET', '/admin/index.html', undefined, manual);
+-    check('管理端 v6 七大视图与监控组件齐备',
+-      ['view-live', 'view-health', 'view-analytics', 'view-users', 'view-data', 'view-backup', 'view-about']
+-        .every((id) => String(aPage.data).includes('id="' + id + '"')) &&
+-      String(aPage.data).includes('id="health-checks"') && String(aPage.data).includes('id="perm-matrix"'));
++    check('管理端八大视图与 v6.1 新组件齐备',
++      ['view-live', 'view-health', 'view-analytics', 'view-users', 'view-data', 'view-feedback', 'view-backup', 'view-about',
++        'btn-backup-export', 'backup-file', 'backup-verify', 'audit-table', 'fb-slots', 'health-checks', 'perm-matrix']
++        .every((id) => String(aPage.data).includes('id="' + id + '"')));
+ 
+     const uIdxAnon = await anon.req('GET', '/user/index.html', undefined, manual);
+     check('未登录访问用户工作台→本端登录页',
+@@ -370,7 +475,7 @@ async function main() {
+     const day = await admin.req('GET', '/api/admin/day?date=' + telemetry.localDay());
+     check('按天读取日志', day.data.rows.length > 0);
+     check('日志含角色字段', day.data.rows.some((r) => r.role === 'student' || r.role === 'admin'));
+-    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.0.0');
++    const v4rows = day.data.rows.filter((r) => r.app_version === 'v6.1.0');
+     check('单请求库存快照计算 ≤1 次', v4rows.length > 0 &&
+       v4rows.every((r) => (r.meta.reconcile_calls || 0) <= 1));
+     const overview = await admin.req('GET', '/api/admin/overview');
+@@ -409,6 +514,10 @@ async function main() {
+     });
+     check('管理端入口可正常登录', adminAtAdmin.status === 200);
+ 
++    check('全程未向真实日志写入任何 smoke 记录',
++      telemetry.readDay(telemetry.localDay()).every((r) => r.source !== 'smoke'),
++      '主日志 ' + mainLogBefore + ' → ' + telemetry.readDay(telemetry.localDay()).length + ' 行（并发访问不计入断言）');
++
+     sse.cancel(); ctrl.abort();
+     const pass = results.filter((r) => r.ok).length;
+     console.log('\n结果：' + pass + '/' + results.length + ' 项通过');
+@@ -421,6 +530,9 @@ async function main() {
+     if (SMOKE_DIR.endsWith('__smoke__') && fs.existsSync(SMOKE_DIR)) {
+       fs.rmSync(SMOKE_DIR, { recursive: true, force: true });
+     }
++    if (SMOKE_LOG_DIR.endsWith('__smoke__') && fs.existsSync(SMOKE_LOG_DIR)) {
++      fs.rmSync(SMOKE_LOG_DIR, { recursive: true, force: true });
++    }
+   }
+ }
+ 
+diff --git a/server.js b/server.js
+index 06586d3..f950057 100644
+--- a/server.js
++++ b/server.js
+@@ -44,6 +44,13 @@ function send(res, status, body, headers = {}) {
+     'Content-Type': 'application/json; charset=utf-8',
+     'Cache-Control': 'no-store',
+     'X-Content-Type-Options': 'nosniff',
++    'Referrer-Policy': 'same-origin',
++    // 页面无外部资源、无内联脚本；style 允许 inline 属性（组件里有行内宽度）。
++    // 不设 X-Frame-Options / frame-ancestors：本地预览面板以内嵌方式展示页面，
++    // 而点击劫持对本机工具不构成实际威胁，跨站写请求由下面的同源校验兜底。
++    'Content-Security-Policy': "default-src 'self' blob:; script-src 'self'; " +
++      "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
++      "object-src 'none'; base-uri 'self'; form-action 'self'",
+     ...headers,
+   });
+   res.end(payload);
+@@ -145,6 +152,19 @@ function readBody(req) {
+   });
+ }
+ 
++/**
++ * CSRF 同源校验：跨站页面无法伪造本地服务的写请求。
++ * 无 Origin / Referer 时放行（本机 curl 与冒烟测试不发送该头，
++ * 且 Cookie 已设 SameSite=Lax，浏览器跨站 POST 不会携带本会话）。
++ */
++function sameOrigin(req) {
++  const raw = req.headers.origin || req.headers.referer || '';
++  if (!raw) return true;
++  try {
++    return new URL(raw).host.toLowerCase() === String(req.headers.host || '').toLowerCase();
++  } catch (_) { return false; }
++}
++
+ function anonSession(req, user) {
+   const raw = (user ? user.id : '') + '|' + (req.socket.remoteAddress || 'local');
+   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12);
+@@ -247,6 +267,13 @@ const server = http.createServer(async (req, res) => {
+       return handleLogStream(req, res, user, session);
+     }
+ 
++    if (['POST', 'PUT', 'DELETE'].includes(req.method) && !sameOrigin(req)) {
++      errorCode = 'CSRF_ORIGIN_MISMATCH';
++      statusCode = 403;
++      res.on('finish', finish);
++      return send(res, 403, { error: errorCode, message: '请求来源与本站不一致，已拒绝' });
++    }
++
+     const body = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE'
+       ? await readBody(req) : {};
+     const result = await api.handle({
