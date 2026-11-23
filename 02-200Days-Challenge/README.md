@@ -10,6 +10,11 @@
 | 自动化运行日志 Telemetry | 根目录 `process_logs/YYYY-MM-DD.jsonl` | 服务按自然日自动追加；日报为 `process_logs/summary-*.md` |
 | 迭代 Diff 记录 | 本目录 `iterations/` | 5 次真实 `git show` Diff + 索引，见 [`iterations/README.md`](iterations/README.md) |
 | 交付物逐项对照 | `docs/交付物对照.md` | SRS 第 8 / 10 章与当前实现的逐项状态 |
+| 软件需求规格说明书 | `docs/软件需求规格说明书.md` | SRS V1.0 全文要点 + 逐项实现状态 |
+| 系统架构设计 | `docs/系统架构设计.md` | Mermaid 架构图、鉴权时序、监控数据流、安全边界 |
+| 数据库设计说明 | `docs/数据库设计说明.md` | 8 个 JSON 数据集真实字段 + SRS 24 张表 DDL 设计稿 |
+| 测试用例与报告 | `docs/测试用例与报告.md` | 12 组、132 项断言、历史迭代结果、已知限制 |
+| 7 天运行报告 | `docs/7天运行报告.md` | 9 天真实日志汇总，如实标注未达标 |
 | 使用说明 | `docs/使用说明.md` | 启动、三套入口、局域网、助手、备份、FAQ |
 
 > 若评分要求严格按物理目录归档，可执行一次「整体迁移 + 文档路径同步」；那属于纯结构调整，不影响 Git 历史与迭代 Diff。是否迁移由仓库所有者决定。

@@ -7,25 +7,23 @@
 
 1. 登录 **你自己的** GitHub 账号 → 右上角 `+` → `New repository`。
 2. 填写：
-   - **Repository name**：`ITEC-2026-0119-mengjinzhao`
-     （课程格式 `ITEC-2026-学号后四位-姓名拼音`；若你在网页上用了别的名字，下面所有 URL 以实际创建的为准）
+   - **Repository name**：`ICEC-2026-0119-mengjinzhao-`（**本人实际创建的仓库名**）
+     （课程模板格式写作 `ITEC-2026-学号后四位-姓名拼音`；实际仓库以已创建地址为准，注意首字母与末尾连字符）
    - **Description**（可选）：`项目四 · 校园事务台 CampusDesk · 轻量化实用程序与真实运行日志验证`
    - **Public**（公开，过程数据需要可核验）
-   - **不要**勾选 `Add a README file`、`.gitignore`、`Choose a license` —— 本地已有 14 次提交，勾选会造成首次推送冲突。
-3. 点 `Create repository`，复制页面上的仓库地址，形如
-   `https://github.com/<你的用户名>/ITEC-2026-0119-mengjinzhao.git`。
+   - **不要**勾选 `Add a README file`、`.gitignore`、`Choose a license` —— 本地已有 15+ 次提交，勾选会造成首次推送冲突。
+3. 点 `Create repository`，复制页面上的仓库地址：
+   `https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao-.git`。
 
 > 仓库所有者显示为你的账号，即满足「仓库属于我自己」。系统不会用任何第三方账号代替你创建。
 
 ## 二、把地址交给本机仓库并推送
 
-在 `E:\校园软件` 目录下执行（把 `<你的用户名>` 替换为实际值）：
-
 ```bash
-git remote add origin https://github.com/<你的用户名>/ITEC-2026-0119-mengjinzhao.git
+git remote add origin https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao-.git
 git remote -v                       # 核对地址
 git status                          # 应显示 working tree clean
-git log --oneline                   # 应看到 14 次提交，当前分支 main
+git log --oneline                   # 查看提交历史，当前分支 main
 git push -u origin main
 ```
 
@@ -37,12 +35,12 @@ git push -u origin main
 
 | 课程命令 | 本项目中的用法 |
 | --- | --- |
-| `git clone <仓库地址>` | 在另一台电脑取副本：`git clone https://github.com/<用户名>/ITEC-2026-0119-mengjinzhao.git` |
+| `git clone <仓库地址>` | 在另一台电脑取副本：`git clone https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao-.git` |
 | `git status` | 查看当日新增的 `process_logs/` 与文档改动 |
 | `git add .` | 暂存过程数据（本项目由 `daily-report.js --sync` 自动完成） |
 | `git commit -m "实测日志"` | 每次同步自动生成一条含日报的提交，可用 `git log --oneline` 查看 |
 | `git push origin main` | 同步到云端；分支已由 `master` 统一为 `main` |
-| `git log --oneline` | 核验 14 次提交与迭代时间线 |
+| `git log --oneline` | 核验提交历史与迭代时间线 |
 
 ## 四、每日同步（连续 7 天日志靠这个累积）
 

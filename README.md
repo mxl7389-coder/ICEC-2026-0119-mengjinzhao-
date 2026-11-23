@@ -6,14 +6,16 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 课程仓库名 | `ITEC-2026-0119-mengjinzhao`（学号后四位 `0119`，姓名拼音 `mengjinzhao`） |
+| 课程仓库名 | `ICEC-2026-0119-mengjinzhao-`（本人实际创建的公开仓库；课程模板写作 `ITEC-`，以实际仓库地址为准） |
 | 选题 | 项目四 · 解决校园真实痛点的轻量化实用程序研发与日常运行日志验证 |
 | 真实痛点 | ① 班群 / 教务通知分散，截止时间容易漏；② 实验室器材"账上有、柜里没有"；③ 错题抄完后再也不复习 |
 | 材料与运行 | 个人电脑（Windows 10 64 位）+ 连续真实运行日志；Node.js 18+ 直接运行，零第三方依赖、无 CDN、无 API Key、不联网 |
 | 数据来源 | 业务数据、账号、8 位用户反馈全部由本人与真实使用者录入；运行日志由真实 HTTP 请求自动采集，含脱敏时间戳、调用频次、耗时与错误码 |
 | 防摆拍声明 | **不补造历史日志、不代填用户反馈、不生成示例调研材料**。未达标项与补齐方式见 [`docs/仓库交付自查.md`](docs/仓库交付自查.md) |
 
-课程要求的标准目录：[`01-Field-Discovery/`](01-Field-Discovery/README.md)（阶段一调研，材料待本人补充）、[`02-200Days-Challenge/`](02-200Days-Challenge/README.md)（源码 / `process_logs/` / `iterations/`）、[`03-AI-Collaboration/`](03-AI-Collaboration/README.md)（关键 AI 排障记录）。
+课程要求的标准目录：[`01-Field-Discovery/`](01-Field-Discovery/README.md)（阶段一调研分析）、[`02-200Days-Challenge/`](02-200Days-Challenge/README.md)（源码 / `process_logs/` / `iterations/`）、[`03-AI-Collaboration/`](03-AI-Collaboration/README.md)（关键 AI 排障记录）。
+
+**交付文档索引**（对应 SRS 第 10 章）：[软件需求规格说明书](docs/软件需求规格说明书.md) · [系统架构设计](docs/系统架构设计.md) · [数据库设计说明](docs/数据库设计说明.md) · [测试用例与报告](docs/测试用例与报告.md) · [7 天运行报告](docs/7天运行报告.md) · [交付物对照](docs/交付物对照.md) · [仓库交付自查](docs/仓库交付自查.md) · [使用说明](docs/使用说明.md) · [用户反馈表](docs/用户反馈表.md) · [反馈收集指引](docs/用户反馈收集指引.md) · [GitHub 建仓与推送](docs/GitHub建仓与推送.md)。
 
 一个跑在个人电脑上的校园工具站，把三件高频、琐碎、容易漏的事收进一个地方：
 
@@ -282,18 +284,15 @@ New-NetFirewallRule -DisplayName 'CampusDesk LAN 5174' -Direction Inbound -Actio
 
 ---
 
-## 推送到 GitHub（需要你本人操作）
+## 推送到 GitHub
 
-仓库必须由**你本人的 GitHub 账号**创建，所有者是你。本地已备好 **14 次真实提交**，分支已统一为 `main`，`git remote -v` 仍为空（等你提供地址）。完整步骤见 [`docs/GitHub建仓与推送.md`](docs/GitHub建仓与推送.md)，最短路径：
+仓库由**你本人的 GitHub 账号**创建，所有者是你：`https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao-`。本地已备好 15+ 次真实提交，分支为 `main`。完整步骤见 [`docs/GitHub建仓与推送.md`](docs/GitHub建仓与推送.md)，最短路径：
 
 ```bash
-# 1. 在 GitHub 网页新建公开空仓库 ITEC-2026-0119-mengjinzhao
-#    不要勾选 README / .gitignore / license，避免与本地历史冲突
-# 2. 把复制到的仓库地址填进下面这一行（把 <用户名> 换成你的 GitHub 用户名）
-git remote add origin https://github.com/<用户名>/ITEC-2026-0119-mengjinzhao.git
+git remote add origin https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao-.git
 git status                          # 确认待提交内容
 git push -u origin main             # 首次推送；弹登录窗口时用你自己的账号登录
-# 3. 之后每天同步过程数据
+# 之后每天同步过程数据
 node scripts/daily-report.js --sync && git push origin main
 git log --oneline                   # 查看提交历史时间线
 ```
