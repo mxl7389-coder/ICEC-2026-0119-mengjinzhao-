@@ -30,13 +30,15 @@ Write-Host '--- 当前状态 ---' -ForegroundColor Cyan
 Write-Host "提交总数: $(& $git rev-list --count HEAD)"
 Write-Host ''
 
-# 4. 走本机代理（若环境变量里没有代理则自动跳过）
+# 4. Proxy: env var > Windows system proxy > known local port
 $proxy = $env:HTTPS_PROXY
-$args = @()
-if ($proxy) {
-  $args += '-c', "http.proxy=$proxy", '-c', "https.proxy=$proxy"
-  Write-Host "使用代理: $proxy" -ForegroundColor Gray
+if (-not $proxy) {
+  $ie = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+  if ($ie -and $ie.ProxyEnable -eq 1 -and $ie.ProxyServer) { $proxy = 'http://' + $ie.ProxyServer }
 }
+if (-not $proxy) { $proxy = 'http://127.0.0.1:7897' }
+$args = @('-c', "http.proxy=$proxy", '-c', "https.proxy=$proxy")
+Write-Host "Using proxy: $proxy" -ForegroundColor Gray
 
 # 5. 推送
 Write-Host '正在推送…（首次会弹出 GitHub 登录窗口，请用你自己的账号登录）' -ForegroundColor Yellow
@@ -48,7 +50,8 @@ if ($code -eq 0) {
   Write-Host '推送成功！' -ForegroundColor Green
   Write-Host '仓库地址: https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao-' -ForegroundColor Green
   Write-Host ''
-  Write-Host '提醒：请在 GitHub 仓库 Settings 底部把可见性改为 Public，老师才能看到。' -ForegroundColor Yellow
+  Write-Host 'Repo: https://github.com/mxl7389-coder/ICEC-2026-0119-mengjinzhao- (Public)' -ForegroundColor Yellow
+  Write-Host 'Daily log: run node scripts/daily-report.js --sync first, then this script' -ForegroundColor Yellow
 } else {
   Write-Host "推送未完成（退出码 $code）。把屏幕上的红字截图发给助手排障即可。" -ForegroundColor Red
   Write-Host '常见原因：登录窗口未完成授权 / 仓库仍是 Private / 网络代理断开。' -ForegroundColor Gray
