@@ -15,6 +15,8 @@
 
 课程要求的标准目录：[`01-Field-Discovery/`](01-Field-Discovery/README.md)（阶段一调研分析）、[`02-200Days-Challenge/`](02-200Days-Challenge/README.md)（源码 / `process_logs/` / `iterations/`）、[`03-AI-Collaboration/`](03-AI-Collaboration/README.md)（关键 AI 排障记录）。
 
+**两份由真实数据生成、可一键复现的分析/记录作品**：[真实运行日志数据看板](02-200Days-Challenge/日志洞察/运行数据看板.html)（脚本逐行解析 `process_logs/*.jsonl` 后生成 SVG 图表、[分析报告](02-200Days-Challenge/日志洞察/分析报告.md) 与 [统计结果](02-200Days-Challenge/日志洞察/统计结果.json)，附输入文件 SHA256）；[真实 AI 对话逐字导出](03-AI-Collaboration/chat-export.md)（由 [导出脚本](03-AI-Collaboration/scripts/export-dialogue.js) 从本机会话记录提取 22 轮真人提问与可见回答，文末附 21 条真实运行事件）。两者均不编造数据，复现命令见各自目录 README。
+
 **交付文档索引**（对应 SRS 第 10 章）：[软件需求规格说明书](docs/软件需求规格说明书.md) · [系统架构设计](docs/系统架构设计.md) · [数据库设计说明](docs/数据库设计说明.md) · [测试用例与报告](docs/测试用例与报告.md) · [7 天运行报告](docs/7天运行报告.md) · [交付物对照](docs/交付物对照.md) · [仓库交付自查](docs/仓库交付自查.md) · [使用说明](docs/使用说明.md) · [用户反馈表](docs/用户反馈表.md) · [反馈收集指引](docs/用户反馈收集指引.md) · [GitHub 建仓与推送](docs/GitHub建仓与推送.md)。
 
 一个跑在个人电脑上的校园工具站，把三件高频、琐碎、容易漏的事收进一个地方：

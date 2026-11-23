@@ -1,8 +1,8 @@
 # 关键 AI 提问与排障记录（AI Collaboration）
 
 > 课程建议目录：关键 AI 提问排障对话记录。
-> 本目录含两份文件：`README.md`（下表，快速排障摘要）与 [`AI协作过程与人工核验记录.md`](AI协作过程与人工核验记录.md)（协作定位、迭代复盘、提示策略、人工核验清单、边界声明）。
-> 以下为**开发过程中真实发生**的关键问题与处理结论摘要，按时间排列；不是逐字对话导出。若需要完整原始对话，请从所用 AI 工具导出后放入本目录（例如 `chat-export-2026-11-11.md`）。
+> 本目录现有四份材料：`README.md`（下表，快速排障摘要）、[`AI协作过程与人工核验记录.md`](AI协作过程与人工核验记录.md)（协作定位、迭代复盘、提示策略、人工核验清单）、[`chat-export.md`](chat-export.md)（**真实逐字对话导出**）与 [`scripts/export-dialogue.js`](scripts/export-dialogue.js)（可复现的导出脚本）。
+> 下表是**开发过程中真实发生**的关键问题与处理结论摘要，按时间排列，便于快速查阅；**逐字原文**请看 [`chat-export.md`](chat-export.md)，机器可读的轮次与事件统计见 [`对话统计.json`](对话统计.json)。
 
 | 日期 | 关键提问 / 现象 | 排查结论 | 落地改动 |
 | --- | --- | --- | --- |
@@ -14,6 +14,22 @@
 | 11-17 | 一个畸形 URL 会不会打挂服务？ | 隔离环境实测 `/api/health/%E0%A4%A` 触发 `URIError` 进程退出，无需登录 | 解码移入 try + 全局 rejection 兜底，`git show 666f8e3` |
 | 11-18 | PowerShell 执行 `LAN=1 node server.js` 报「无法识别为 cmdlet」 | 该写法是 Bash 系语法，Windows 终端把 `LAN=1` 当命令名；服务端无故障 | 新增 `--lan` / `--port` / `--help` 跨终端参数，`git show 972865d` |
 | 11-22 | GitHub 远端为空，过程数据如何提交 | 需本人创建/授权仓库；7 天连续日志与 8 位反馈仍须真实执行，不能补造 | 本仓库标准化目录 + 迭代 Diff 归档 |
+
+## 逐字对话导出（已补齐）
+
+[`chat-export.md`](chat-export.md) 由 [`scripts/export-dialogue.js`](scripts/export-dialogue.js) 从本机真实会话记录逐条解析生成：
+
+- 只保留恰含一个 `<user_query>` 的真人提问原文，AI 回答取 `output_text` 可见文字，逐字不润色；
+- 宿主注入的运行上下文、压缩摘要、自动继续指令、工具调用与系统提示不进正文；
+- 后台任务失败通知与网络恢复事件另存为文末「真实运行事件时间线」，不丢弃证据；
+- 令牌/密钥脱敏，图片附件只留文件名；导出信息里附源文件 SHA256 供核对。
+
+复现：
+
+```bash
+cd E:\校园软件
+node 03-AI-Collaboration/scripts/export-dialogue.js "<本机会话记录.jsonl>"
+```
 
 ## 使用原则
 

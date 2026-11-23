@@ -9,6 +9,7 @@
 | 可运行完整源码 | 仓库根目录 `server.js`、`lib/`、`public/`、`scripts/`、`docs/` | `node server.js --lan` 直接可跑；若整体移入子目录，所有启动命令与 telemetry 写入路径都要同步改动，反而增加出错面 |
 | 自动化运行日志 Telemetry | 根目录 `process_logs/YYYY-MM-DD.jsonl` | 服务按自然日自动追加；日报为 `process_logs/summary-*.md` |
 | 迭代 Diff 记录 | 本目录 `iterations/` | 5 次真实 `git show` Diff + 索引，见 [`iterations/README.md`](iterations/README.md) |
+| **真实日志洞察作品** | 本目录 `日志洞察/` | [`运行日志分析.js`](日志洞察/运行日志分析.js) 逐行解析真实日志 → [`运行数据看板.html`](日志洞察/运行数据看板.html)（自包含 SVG 图表）、[`分析报告.md`](日志洞察/分析报告.md)、[`统计结果.json`](日志洞察/统计结果.json) |
 | 交付物逐项对照 | `docs/交付物对照.md` | SRS 第 8 / 10 章与当前实现的逐项状态 |
 | 软件需求规格说明书 | `docs/软件需求规格说明书.md` | SRS V1.0 全文要点 + 逐项实现状态 |
 | 系统架构设计 | `docs/系统架构设计.md` | Mermaid 架构图、鉴权时序、监控数据流、安全边界 |
@@ -26,6 +27,7 @@ node server.js --help                 # 查看启动参数
 node server.js --lan --port 5174      # 局域网模式
 node scripts/smoke-test.js            # 132/132 项断言（隔离数据与日志目录）
 node scripts/daily-report.js          # 生成当日运行日报
+node 02-200Days-Challenge/日志洞察/运行日志分析.js   # 重算真实日志看板与报告
 ```
 
 ## 数据真实性

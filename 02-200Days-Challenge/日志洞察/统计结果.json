@@ -1,0 +1,488 @@
+{
+  "generated_at": "2026-11-23T11:45:50.094Z",
+  "source_note": "全部数值由 process_logs/*.jsonl 逐行解析得出；脚本不写入、不补齐任何日志行。",
+  "input": {
+    "dir": "process_logs/",
+    "file_count": 10,
+    "total_lines": 861,
+    "parse_errors": 0,
+    "files": [
+      {
+        "file": "process_logs/2026-11-11.jsonl",
+        "bytes": 44143,
+        "lines": 188,
+        "parsed": 188,
+        "parse_errors": 0,
+        "sha256": "6e5ffc84799b6144676fa1b8d2edaf1815356840734167c46704c2d1912b19aa"
+      },
+      {
+        "file": "process_logs/2026-11-12.jsonl",
+        "bytes": 11298,
+        "lines": 49,
+        "parsed": 49,
+        "parse_errors": 0,
+        "sha256": "cb8c6ad5dc1b82018c74baabf3b47f3ea9e89b9c97058786b576d90d5a5e5575"
+      },
+      {
+        "file": "process_logs/2026-11-13.jsonl",
+        "bytes": 17738,
+        "lines": 73,
+        "parsed": 73,
+        "parse_errors": 0,
+        "sha256": "0f94731853a7928750861323467ebe08cc46567639d21d0d312d6cb5239f4654"
+      },
+      {
+        "file": "process_logs/2026-11-16.jsonl",
+        "bytes": 39359,
+        "lines": 166,
+        "parsed": 166,
+        "parse_errors": 0,
+        "sha256": "ed6887200fbe7bface69e99de8507e3a667447786b7591f885a368672069bc07"
+      },
+      {
+        "file": "process_logs/2026-11-17.jsonl",
+        "bytes": 79912,
+        "lines": 332,
+        "parsed": 332,
+        "parse_errors": 0,
+        "sha256": "81dd9c0966c163bdbab314f65be4be4da98df9800275057a36dfd58b360602aa"
+      },
+      {
+        "file": "process_logs/2026-11-18.jsonl",
+        "bytes": 2175,
+        "lines": 9,
+        "parsed": 9,
+        "parse_errors": 0,
+        "sha256": "82cc6a6091f00573e446f045b2c1526032d7acf038c18d8b6205b77b0f962dc3"
+      },
+      {
+        "file": "process_logs/2026-11-19.jsonl",
+        "bytes": 9057,
+        "lines": 36,
+        "parsed": 36,
+        "parse_errors": 0,
+        "sha256": "1bf7fcac10861adbed94a980df30b3c15a59d3f8f576f203044f7ec3ca08772c"
+      },
+      {
+        "file": "process_logs/2026-11-20.jsonl",
+        "bytes": 944,
+        "lines": 4,
+        "parsed": 4,
+        "parse_errors": 0,
+        "sha256": "df70ab23ecced8d3086d68ef486b2d2fc808e82b9c638e66bbd4e412e756def1"
+      },
+      {
+        "file": "process_logs/2026-11-22.jsonl",
+        "bytes": 255,
+        "lines": 1,
+        "parsed": 1,
+        "parse_errors": 0,
+        "sha256": "5afd43845fe85429261ba73ef522f03d962821f57b4c71876c5387ff5ee6bba9"
+      },
+      {
+        "file": "process_logs/2026-11-23.jsonl",
+        "bytes": 717,
+        "lines": 3,
+        "parsed": 3,
+        "parse_errors": 0,
+        "sha256": "193732454e5bd526b2eb1b22938e4e5ad398362661b7dc6598972752ffb8dbbe"
+      }
+    ]
+  },
+  "overview": {
+    "records": 861,
+    "days_with_logs": 10,
+    "first_day": "2026-11-11",
+    "last_day": "2026-11-23",
+    "calendar_days_in_range": 13,
+    "gap_days": 3,
+    "gap_dates": [
+      "2026-11-14",
+      "2026-11-15",
+      "2026-11-21"
+    ],
+    "longest_consecutive_days": 5,
+    "longest_consecutive_end": "2026-11-20",
+    "current_consecutive_days": 2,
+    "errored_records": 115,
+    "error_rate": 13.36,
+    "peak_day": [
+      "2026-11-17",
+      332
+    ],
+    "slowest_request": {
+      "duration_ms": 186,
+      "module": "admin",
+      "action": "report",
+      "day": "2026-11-11"
+    }
+  },
+  "per_day": [
+    {
+      "day": "2026-11-11",
+      "count": 188
+    },
+    {
+      "day": "2026-11-12",
+      "count": 49
+    },
+    {
+      "day": "2026-11-13",
+      "count": 73
+    },
+    {
+      "day": "2026-11-14",
+      "count": 0
+    },
+    {
+      "day": "2026-11-15",
+      "count": 0
+    },
+    {
+      "day": "2026-11-16",
+      "count": 166
+    },
+    {
+      "day": "2026-11-17",
+      "count": 332
+    },
+    {
+      "day": "2026-11-18",
+      "count": 9
+    },
+    {
+      "day": "2026-11-19",
+      "count": 36
+    },
+    {
+      "day": "2026-11-20",
+      "count": 4
+    },
+    {
+      "day": "2026-11-21",
+      "count": 0
+    },
+    {
+      "day": "2026-11-22",
+      "count": 1
+    },
+    {
+      "day": "2026-11-23",
+      "count": 3
+    }
+  ],
+  "by_source": [
+    [
+      "(空)",
+      741
+    ],
+    [
+      "live",
+      120
+    ]
+  ],
+  "by_app_version": [
+    [
+      "v5.0.0",
+      255
+    ],
+    [
+      "v6.0.0",
+      175
+    ],
+    [
+      "v4.0.0",
+      124
+    ],
+    [
+      "v3.0.0",
+      70
+    ],
+    [
+      "v4.0.1",
+      67
+    ],
+    [
+      "v6.2.0",
+      64
+    ],
+    [
+      "v6.1.0",
+      56
+    ],
+    [
+      "v1.0.0",
+      25
+    ],
+    [
+      "v2.0.0",
+      25
+    ]
+  ],
+  "by_status": [
+    [
+      "ok",
+      746
+    ],
+    [
+      "error",
+      115
+    ]
+  ],
+  "by_module": [
+    [
+      "admin",
+      176
+    ],
+    [
+      "page",
+      155
+    ],
+    [
+      "auth",
+      146
+    ],
+    [
+      "notice",
+      85
+    ],
+    [
+      "health",
+      67
+    ],
+    [
+      "dashboard",
+      54
+    ],
+    [
+      "mistake",
+      41
+    ],
+    [
+      "equipment",
+      36
+    ],
+    [
+      "loan",
+      32
+    ],
+    [
+      "bootstrap",
+      18
+    ],
+    [
+      "feedback",
+      17
+    ],
+    [
+      "logs",
+      16
+    ],
+    [
+      "activity",
+      9
+    ],
+    [
+      "not-exist",
+      8
+    ],
+    [
+      "assistant",
+      1
+    ]
+  ],
+  "by_action": [
+    [
+      "get",
+      163
+    ],
+    [
+      "login",
+      73
+    ],
+    [
+      "list",
+      68
+    ],
+    [
+      "state",
+      50
+    ],
+    [
+      "index",
+      44
+    ],
+    [
+      "overview",
+      41
+    ],
+    [
+      "home",
+      40
+    ],
+    [
+      "users",
+      39
+    ],
+    [
+      "parse",
+      34
+    ],
+    [
+      "admin",
+      32
+    ],
+    [
+      "add",
+      31
+    ],
+    [
+      "summary",
+      22
+    ],
+    [
+      "day",
+      21
+    ],
+    [
+      "setup",
+      21
+    ],
+    [
+      "stream",
+      20
+    ],
+    [
+      "me",
+      18
+    ],
+    [
+      "user",
+      17
+    ],
+    [
+      "create",
+      16
+    ],
+    [
+      "return",
+      16
+    ],
+    [
+      "review",
+      16
+    ]
+  ],
+  "by_error_code": [
+    [
+      "(空)",
+      746
+    ],
+    [
+      "FORBIDDEN",
+      30
+    ],
+    [
+      "BAD_CREDENTIALS",
+      22
+    ],
+    [
+      "UNAUTHORIZED",
+      17
+    ],
+    [
+      "PORTAL_MISMATCH",
+      9
+    ],
+    [
+      "ALREADY_INITIALIZED",
+      8
+    ],
+    [
+      "EMPTY_NOTICE",
+      8
+    ],
+    [
+      "OUT_OF_STOCK",
+      8
+    ],
+    [
+      "UNKNOWN_ROUTE",
+      8
+    ],
+    [
+      "TOO_MANY_ATTEMPTS",
+      2
+    ],
+    [
+      "CSRF_ORIGIN_MISMATCH",
+      1
+    ],
+    [
+      "INVALID_PASSWORD",
+      1
+    ],
+    [
+      "SETUP_LOCAL_ONLY",
+      1
+    ]
+  ],
+  "by_role": [
+    [
+      "(空)",
+      380
+    ],
+    [
+      "admin",
+      273
+    ],
+    [
+      "student",
+      196
+    ],
+    [
+      "teacher",
+      12
+    ]
+  ],
+  "duration_ms": {
+    "samples": 861,
+    "min": 0,
+    "mean": 12.75,
+    "p50": 1.64,
+    "p90": 45.96,
+    "p95": 79.93,
+    "p99": 120.76,
+    "max": 186,
+    "histogram": [
+      {
+        "label": "<5ms",
+        "count": 587
+      },
+      {
+        "label": "5-10ms",
+        "count": 99
+      },
+      {
+        "label": "10-20ms",
+        "count": 59
+      },
+      {
+        "label": "20-50ms",
+        "count": 35
+      },
+      {
+        "label": "50-100ms",
+        "count": 57
+      },
+      {
+        "label": "100-500ms",
+        "count": 24
+      },
+      {
+        "label": ">=500ms",
+        "count": 0
+      }
+    ]
+  }
+}
