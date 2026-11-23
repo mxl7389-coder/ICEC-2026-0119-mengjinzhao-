@@ -1,6 +1,7 @@
 # 关键 AI 提问与排障记录（AI Collaboration）
 
 > 课程建议目录：关键 AI 提问排障对话记录。
+> **提交顺序**：本目录是课程目录第 ④ 项，排在 `01-Field-Discovery/` 的两个课题与 `02-200Days-Challenge/` 的校园事务台**之后**，是全仓库最后一部分。
 > 本目录现有四份材料：`README.md`（下表，快速排障摘要）、[`AI协作过程与人工核验记录.md`](AI协作过程与人工核验记录.md)（协作定位、迭代复盘、提示策略、人工核验清单）、[`chat-export.md`](chat-export.md)（**真实逐字对话导出**）与 [`scripts/export-dialogue.js`](scripts/export-dialogue.js)（可复现的导出脚本）。
 > 下表是**开发过程中真实发生**的关键问题与处理结论摘要，按时间排列，便于快速查阅；**逐字原文**请看 [`chat-export.md`](chat-export.md)，机器可读的轮次与事件统计见 [`对话统计.json`](对话统计.json)。
 
