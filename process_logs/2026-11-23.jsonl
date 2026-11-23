@@ -1,0 +1,3 @@
+{"ts":"2026-11-23T09:58:07.443Z","day":"2026-11-23","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"admin","action":"poll","status":"error","duration_ms":9.52,"error_code":"UNAUTHORIZED","meta":{}}
+{"ts":"2026-11-23T09:58:07.497Z","day":"2026-11-23","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"page","action":"login","status":"ok","duration_ms":2.72,"error_code":null,"meta":{}}
+{"ts":"2026-11-23T09:58:07.516Z","day":"2026-11-23","app_version":"v6.2.0","source":"live","session":"57efdd91ba75","role":null,"module":"auth","action":"state","status":"ok","duration_ms":2.31,"error_code":null,"meta":{"initialized":1,"reconcile_calls":0}}
