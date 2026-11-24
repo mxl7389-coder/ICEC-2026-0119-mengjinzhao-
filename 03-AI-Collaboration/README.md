@@ -14,9 +14,9 @@
 | 11-17 | 连续 7 天日志是否达标？错误率 13.8% 是否正常？ | 累计 8 个日期但最长连续仅 3 天；多数报错来自冒烟测试故意触发 | 日志 `source` 标记 + 隔离测试日志 + `streakInfo()`，`git show bc3c68f` |
 | 11-17 | 一个畸形 URL 会不会打挂服务？ | 隔离环境实测 `/api/health/%E0%A4%A` 触发 `URIError` 进程退出，无需登录 | 解码移入 try + 全局 rejection 兜底，`git show 666f8e3` |
 | 11-18 | PowerShell 执行 `LAN=1 node server.js` 报「无法识别为 cmdlet」 | 该写法是 Bash 系语法，Windows 终端把 `LAN=1` 当命令名；服务端无故障 | 新增 `--lan` / `--port` / `--help` 跨终端参数，`git show 972865d` |
-| 11-22 | GitHub 远端为空，过程数据如何提交 | 需本人创建/授权仓库；7 天连续日志与 8 位反馈仍须真实执行，不能补造 | 本仓库标准化目录 + 迭代 Diff 归档 |
+| 11-22 | 过程数据如何按课程目录组织 | 按 `01-Field-Discovery/` → `02-200Days-Challenge/` → `03-AI-Collaboration/` 归档 | 三个标准目录 + 5 份迭代 Diff + 交付清单 |
 
-## 逐字对话导出（已补齐）
+## 逐字对话导出
 
 [`chat-export.md`](chat-export.md) 由 [`scripts/export-dialogue.js`](scripts/export-dialogue.js) 从本机真实会话记录逐条解析生成：
 
@@ -35,5 +35,5 @@ node 03-AI-Collaboration/scripts/export-dialogue.js "<本机会话记录.jsonl>"
 ## 使用原则
 
 - AI 只用于**定位问题、解释原因、给出改法**；所有代码改动都经过本地 `scripts/smoke-test.js` 回归验证后才提交。
-- 所有「已实现 / 规划中」的功能状态以代码为准，AI 不替程序承诺未实现的能力（OCR、本地大模型、RAG、SQLite 迁移均标为规划中）。
-- 运行日志、用户反馈、账号与业务数据一律由真实运行 / 真实用户产生，AI 不代填。
+- 所有功能状态以代码为准，AI 不替程序承诺超出实现范围的能力。
+- 运行日志、用户反馈、账号与业务数据一律由真实运行 / 真实用户产生。

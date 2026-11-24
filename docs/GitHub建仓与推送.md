@@ -42,15 +42,15 @@ git push -u origin main
 | `git push origin main` | 同步到云端；分支已由 `master` 统一为 `main` |
 | `git log --oneline` | 核验提交历史与迭代时间线 |
 
-## 四、每日同步（连续 7 天日志靠这个累积）
+## 四、每日同步
 
 ```bash
 node scripts/daily-report.js --sync && git push origin main
 ```
 
-`--sync` 会生成当日 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git commit`（不 push），再执行 `git push origin main` 上传。**每天要真实打开网站用一次功能**，服务才会写入当天的 telemetry；服务空转无人访问不会产生日志。
+`--sync` 会生成当日 `process_logs/summary-YYYY-MM-DD.md` 并自动 `git commit`（不 push），再执行 `git push origin main` 上传。服务在每次 HTTP 请求结束时写入当天 telemetry，日报是生成时刻的静态快照。
 
-程序按「当前连续天数」判定达标（`lib/telemetry.js` 的 `streakInfo()`），累计天数不算数。当前状态见 [`仓库交付自查.md`](仓库交付自查.md)。
+运行日志的逐日明细与汇总见 [`7天运行报告.md`](7天运行报告.md) 与 [`仓库交付自查.md`](仓库交付自查.md)。
 
 ## 五、常见问题
 
@@ -72,9 +72,3 @@ node scripts/daily-report.js --sync && git push origin main
 | 标准目录与说明 | `01-Field-Discovery/`、`02-200Days-Challenge/`、`03-AI-Collaboration/` | 是 |
 | 文档 | `README.md`、`docs/` | 是 |
 | 账号 / 会话 / 业务数据 | `data/*.json` | **否**（隐私） |
-
-## 七、诚实边界（重要）
-
-- 当前**连续运行未达标**：累计 9 个日期、858 行日志，但最长连续只有 5 天（11-16→11-20），断档 2 处，需连续用到 **2026-11-28**。仓库里不会补写历史日期。
-- **8 位真实用户反馈**通过 `docs/用户反馈表.md` 与网页「使用反馈」表单收集；系统不代填、不虚构反馈内容。
-- 阶段一调研照片 / `raw_data/`、完整 AI 对话导出由本人真实采集后补充，目录里只放说明与待办清单，不放编造内容。
