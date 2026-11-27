@@ -1,0 +1,77 @@
+{
+  "measuredAt": "2026-11-27 11:08:48",
+  "scope": "逐表读取、表头识别、字段清洗、学号补全与合并校验",
+  "includes": [
+    "打开 10 个工作簿",
+    "识别表头或无表头结构",
+    "清理姓名空格",
+    "补全班内短学号",
+    "跳过空白行",
+    "保留备注及异常成绩",
+    "汇总记录数和学号唯一性检查"
+  ],
+  "excludes": [
+    "模型阅读需求与生成文字的不可精确回溯耗时",
+    "人工复核",
+    "图表渲染"
+  ],
+  "summary": {
+    "classes": 10,
+    "records": 102,
+    "uniqueStudentIds": 102,
+    "validScores": 96
+  },
+  "perFile": [
+    {
+      "table": 1,
+      "fileSeconds": 0.0071632000035606325,
+      "cumulativeSeconds": 0.0071632000035606325
+    },
+    {
+      "table": 2,
+      "fileSeconds": 0.004337399994255975,
+      "cumulativeSeconds": 0.011500599997816607
+    },
+    {
+      "table": 3,
+      "fileSeconds": 0.003762499982258305,
+      "cumulativeSeconds": 0.015263099980074912
+    },
+    {
+      "table": 4,
+      "fileSeconds": 0.013384200021391734,
+      "cumulativeSeconds": 0.028647300001466647
+    },
+    {
+      "table": 5,
+      "fileSeconds": 0.0040250000020023435,
+      "cumulativeSeconds": 0.03267230000346899
+    },
+    {
+      "table": 6,
+      "fileSeconds": 0.003964700008509681,
+      "cumulativeSeconds": 0.03663700001197867
+    },
+    {
+      "table": 7,
+      "fileSeconds": 0.0039870000036899,
+      "cumulativeSeconds": 0.04062400001566857
+    },
+    {
+      "table": 8,
+      "fileSeconds": 0.003966499993111938,
+      "cumulativeSeconds": 0.04459050000878051
+    },
+    {
+      "table": 9,
+      "fileSeconds": 0.003825799998594448,
+      "cumulativeSeconds": 0.04841630000737496
+    },
+    {
+      "table": 10,
+      "fileSeconds": 0.00412319996394217,
+      "cumulativeSeconds": 0.05253949997131713
+    }
+  ],
+  "totalSeconds": 0.05265609998605214
+}
