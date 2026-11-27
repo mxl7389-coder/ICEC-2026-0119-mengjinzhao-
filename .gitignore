@@ -8,5 +8,6 @@ Thumbs.db
 .workbuddy/
 
 # 业务数据保留在本机，不随仓库提交；运行日志必须提交
-data/*.json
-data/__smoke__/
+02-200Days-Challenge/data/
+02-200Days-Challenge/data/__smoke__/
+02-200Days-Challenge/*.log

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640">
+  <rect width="1200" height="640" fill="#faf9f5"/>
+  <text x="56" y="48" font-family="Microsoft YaHei, sans-serif" font-size="26" font-weight="700" fill="#22352d">模型 A逐图识别可靠性评分</text>
+  <text x="56" y="76" font-family="Microsoft YaHei, sans-serif" font-size="13" fill="#65736c">满分 10 分 · 15 张校园复杂视觉场景 · 数据源：模型 A原始输出</text>
+  <line x1="250" y1="108" x2="1090" y2="108" stroke="#d9dfda"/>
+  <line x1="250" y1="440" x2="1090" y2="440" stroke="#d9dfda"/>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="12" fill="#516159">
+    <text x="56" y="141">01 黑色机箱盖板</text><rect x="250" y="130" width="560" height="14" rx="4" fill="#b89252"/><text x="822" y="141">7</text>
+    <text x="56" y="171">02 线网货架框架</text><rect x="250" y="160" width="480" height="14" rx="4" fill="#bc985e"/><text x="742" y="171">6</text>
+    <text x="56" y="201">03 走廊收纳箱</text><rect x="250" y="190" width="640" height="14" rx="4" fill="#6f8d75"/><text x="902" y="201">8</text>
+    <text x="56" y="231">04 机房工位</text><rect x="250" y="220" width="720" height="14" rx="4" fill="#4f7a65"/><text x="982" y="231">9</text>
+    <text x="56" y="261">05 地面污渍</text><rect x="250" y="250" width="320" height="14" rx="4" fill="#b76552"/><text x="582" y="261">4</text>
+    <text x="56" y="291">06 操场运动场</text><rect x="250" y="280" width="720" height="14" rx="4" fill="#4f7a65"/><text x="982" y="291">9</text>
+    <text x="56" y="321">07 网架机箱纸巾</text><rect x="250" y="310" width="400" height="14" rx="4" fill="#b4864e"/><text x="662" y="321">5</text>
+    <text x="56" y="351">08 拼接课桌椅</text><rect x="250" y="340" width="640" height="14" rx="4" fill="#6f8d75"/><text x="902" y="351">8</text>
+    <text x="56" y="381">09 校园步道</text><rect x="250" y="370" width="720" height="14" rx="4" fill="#4f7a65"/><text x="982" y="381">9</text>
+    <text x="56" y="411">10 运动会人群</text><rect x="250" y="400" width="560" height="14" rx="4" fill="#b89252"/><text x="822" y="411">7</text>
+    <text x="56" y="441">11 远处模糊人物</text><rect x="250" y="430" width="240" height="14" rx="4" fill="#b45449"/><text x="502" y="441">3</text>
+    <text x="56" y="471">12 阴天山景建筑</text><rect x="250" y="460" width="640" height="14" rx="4" fill="#6f8d75"/><text x="902" y="471">8</text>
+    <text x="56" y="501">13 远处汉服女生</text><rect x="250" y="490" width="400" height="14" rx="4" fill="#b4864e"/><text x="662" y="501">5</text>
+    <text x="56" y="531">14 楼梯消防标识</text><rect x="250" y="520" width="640" height="14" rx="4" fill="#6f8d75"/><text x="902" y="531">8</text>
+    <text x="56" y="561">15 夜间校园道路</text><rect x="250" y="550" width="560" height="14" rx="4" fill="#b89252"/><text x="822" y="561">7</text>
+  </g>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="12" fill="#56665e">
+    <circle cx="58" cy="600" r="5" fill="#b45449"/><text x="72" y="604">高风险 / 低信息量</text>
+    <circle cx="224" cy="600" r="5" fill="#b4864e"/><text x="238" y="604">中等风险</text>
+    <circle cx="354" cy="600" r="5" fill="#6f8d75"/><text x="368" y="604">较稳定</text>
+    <text x="500" y="604">平均分 6.87 / 10</text>
+  </g>
+</svg>

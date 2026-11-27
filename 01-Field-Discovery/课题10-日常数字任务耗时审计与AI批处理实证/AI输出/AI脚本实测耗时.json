@@ -1,0 +1,62 @@
+{
+  "measured_at": "2026-11-27 12:33:10",
+  "scope": "打开并规范化 10 张签到表，完成记录数、学号唯一性和成绩分类检查",
+  "excludes": [
+    "模型阅读需求与生成文字的耗时",
+    "人工复核",
+    "最终排版与图表渲染"
+  ],
+  "per_file": [
+    {
+      "table": 1,
+      "fileSeconds": 0.007973200001288205,
+      "cumulativeSeconds": 0.007973200001288205
+    },
+    {
+      "table": 2,
+      "fileSeconds": 0.005244100000709295,
+      "cumulativeSeconds": 0.0132173000019975
+    },
+    {
+      "table": 3,
+      "fileSeconds": 0.004687200009357184,
+      "cumulativeSeconds": 0.017904500011354685
+    },
+    {
+      "table": 4,
+      "fileSeconds": 0.021501899987924844,
+      "cumulativeSeconds": 0.03940639999927953
+    },
+    {
+      "table": 5,
+      "fileSeconds": 0.0050236999813932925,
+      "cumulativeSeconds": 0.04443009998067282
+    },
+    {
+      "table": 6,
+      "fileSeconds": 0.004929899994749576,
+      "cumulativeSeconds": 0.0493599999754224
+    },
+    {
+      "table": 7,
+      "fileSeconds": 0.004941699997289106,
+      "cumulativeSeconds": 0.054301699972711504
+    },
+    {
+      "table": 8,
+      "fileSeconds": 0.004974099982064217,
+      "cumulativeSeconds": 0.05927579995477572
+    },
+    {
+      "table": 9,
+      "fileSeconds": 0.004775700013851747,
+      "cumulativeSeconds": 0.06405149996862747
+    },
+    {
+      "table": 10,
+      "fileSeconds": 0.005063699994934723,
+      "cumulativeSeconds": 0.06911519996356219
+    }
+  ],
+  "total_seconds": 0.0719313999870792
+}
