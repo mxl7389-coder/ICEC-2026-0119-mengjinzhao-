@@ -397,7 +397,7 @@ function healthChecks(agg) {
     { key: 'service', label: 'HTTP 服务', ok: true, detail: '进程正常运行 · ' + process.version },
     { key: 'storage', label: '业务数据目录', ok: fs.existsSync(store.DATA_DIR), detail: 'data/ 可读写，文件指纹缓存生效' },
     { key: 'telemetry', label: '当日日志写入', ok: fs.existsSync(todayFile), detail: 'process_logs/' + today() + '.jsonl' },
-    // 按「连续」而非「累计」判定：11-11/12/13 + 11-16/17 累计 5 天，但最长连续仅 3 天
+    // 按「连续」而非「累计」判定，避免把断档前后的日期误算为连续
     { key: 'coverage', label: '连续运行覆盖', ok: streak.target_met,
       detail: '当前连续 ' + streak.current_streak + ' / 7 天（历史最长 ' + streak.longest_streak + ' 天，累计 ' +
         streak.days_count + ' 天）' + (streak.target_met ? '（已达标）' : (streak.remaining_days ? ' · 还需连续到 ' + streak.target_date : '')) },
